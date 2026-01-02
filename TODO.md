@@ -2,7 +2,7 @@
 
 ## Phase 1: Foundation
 - [x] Initialize Rust workspace and project structure.
-- [ ] Set up `config` crate for environment/file-based configuration.
+- [x] Set up `config` crate for environment/file-based configuration.
 - [ ] Implement NNTP Ingestor (polling `nntp.lore.kernel.org`).
 - [ ] Set up libSQL/Turso schema for mailing lists and patchsets.
 - [ ] Implement internal task queue (tokio channels).

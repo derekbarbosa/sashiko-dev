@@ -1,0 +1,17 @@
+[database]
+url = "libsql://your-database.turso.io"
+token = "your-auth-token"
+
+[nntp]
+server = "nntp.lore.kernel.org"
+port = 119
+groups = ["linux.kernel"]
+
+[ai]
+provider = "openai"
+model = "gpt-4-turbo"
+api_key = "your-api-key"
+
+[server]
+host = "127.0.0.1"
+port = 8080
