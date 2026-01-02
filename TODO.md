@@ -1,7 +1,7 @@
 # Sashiko Implementation TODO
 
 ## Phase 1: Foundation
-- [ ] Initialize Rust workspace and project structure.
+- [x] Initialize Rust workspace and project structure.
 - [ ] Set up `config` crate for environment/file-based configuration.
 - [ ] Implement NNTP Ingestor (polling `nntp.lore.kernel.org`).
 - [ ] Set up libSQL/Turso schema for mailing lists and patchsets.
