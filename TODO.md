@@ -27,8 +27,8 @@
 
 ## Phase 4: Web API & Frontend
 - [x] Build Axum REST API for patches, reviews, and stats.
-- [ ] Implement RBAC (Role-Based Access Control) for API endpoints.
-- [ ] Implement minimalistic "kernel.org style" frontend (Raw HTML/JS/CSS).
+- [ ] Implement RBAC (Role-Based Access Control) for API endpoints (Deferred).
+- [x] Implement minimalistic "kernel.org style" frontend (Raw HTML/JS/CSS).
 - [ ] Add UI for re-running reviews and manual baseline overrides.
 - [ ] Configure Nginx as static file server and reverse proxy.
 

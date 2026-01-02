@@ -3,12 +3,13 @@ use crate::settings::ServerSettings;
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::get,
+    routing::{get, get_service},
     Json, Router,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 pub struct AppState {
@@ -21,6 +22,8 @@ pub async fn run_server(settings: ServerSettings, db: Arc<Database>) -> Result<(
     let app = Router::new()
         .route("/api/patchsets", get(list_patchsets))
         .route("/api/stats", get(get_stats))
+        .route("/", get_service(ServeFile::new("static/index.html")))
+        .nest_service("/static", ServeDir::new("static"))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
