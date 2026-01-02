@@ -5,7 +5,7 @@ token = "your-auth-token"
 [nntp]
 server = "nntp.lore.kernel.org"
 port = 119
-groups = ["linux.kernel"]
+groups = ["org.kernel.vger.linux-kernel"]
 
 [ai]
 provider = "openai"

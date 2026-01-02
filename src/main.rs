@@ -1,5 +1,8 @@
+mod ingestor;
+mod nntp;
 mod settings;
 
+use ingestor::Ingestor;
 use settings::Settings;
 use tracing::{error, info};
 
@@ -23,6 +26,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     info!("Settings: {:?}", settings);
+
+    // Start Ingestor
+    let ingestor = Ingestor::new(settings.nntp);
+    tokio::spawn(async move {
+        if let Err(e) = ingestor.run().await {
+            error!("Ingestor fatal error: {}", e);
+        }
+    });
+
+    // Keep the main thread running
+    tokio::signal::ctrl_c().await?;
+    info!("Shutting down...");
 
     Ok(())
 }
