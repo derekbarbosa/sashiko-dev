@@ -237,15 +237,19 @@ impl Database {
             // Parse version from existing subject
             let existing_version = crate::patch::parse_subject_version(&existing_subject);
             
-            let v_new = version.unwrap_or(1);
-            let v_old = existing_version.unwrap_or(1);
-
             // Matching logic:
             // 1. Author must match
             // 2. Time must be close (within 1 hour / 3600s)
-            // 3. Versions must match
-            // 4. Total parts must match (the Y in X/Y)
-            if existing_author == author && (date - existing_date).abs() < 3600 && v_new == v_old && total_parts == existing_total {
+            // 3. Total parts must match
+            // 4. Versions must match OR one is unspecified (None)
+            //    - None matches Some(6) (Implicit v1/Unknown merges with Explicit v6)
+            //    - Some(5) != Some(6) (Explicit mismatch)
+            let versions_compatible = match (version, existing_version) {
+                (Some(a), Some(b)) => a == b,
+                _ => true, // One or both are None -> Compatible
+            };
+
+            if existing_author == author && (date - existing_date).abs() < 3600 && versions_compatible && total_parts == existing_total {
                 matches.push((id, existing_subject_index));
             }
         }
@@ -578,10 +582,12 @@ mod tests {
         assert!(ps3.is_none());
 
         // 5. Create NEW patchset v2 (Author A, Time 1002 - close time, but v2)
+        // Under new logic "Implicit matches Explicit", this SHOULD merge with ps1 (Implicit)
+        // because time/author/total match.
         let ps_v2 = db.create_patchset(
             thread_id, None, "[PATCH v2] Patchset 1", "Author A", 1002, 2, 1, "to", "cc", None, Some(2), 0
         ).await.unwrap();
-        assert_ne!(ps1, ps_v2);
+        assert_eq!(ps1, ps_v2, "Implicit v1 should merge with v2 if time/author match");
 
         // 6. Create NEW patchset (Author A, Time 1003 - close time, but different total parts)
         let ps_diff_total = db.create_patchset(
@@ -657,5 +663,55 @@ mod tests {
         // Verify the final subject is the cover letter (index 0)
         let list = db.get_patchsets(1, 0).await.unwrap();
         assert_eq!(list[0].subject.as_deref(), Some("[PATCH 0/5] Feature part 0"));
+    }
+
+    #[tokio::test]
+    async fn test_implicit_version_merging() {
+        let db = setup_db().await;
+        let thread_id = db.create_thread("root_v6", "Version 6 Series", 30000).await.unwrap();
+        let author = "Author V6 <v6@example.com>";
+
+        // Case: Cover letter has v6, but patches don't say v6 (implicitly v1?)
+        // If the user forgot to version patches, they should still merge if time/author match.
+        // However, strict version check prevents this if one is v6 and other is v1.
+        // But the prompt says "They should be merged".
+        // This implies loose version matching if one side is v1 (default)?
+        
+        // 1. Cover letter: [PATCH 00/33 v6] -> v6
+        db.create_message("msg_00", thread_id, None, author, "[PATCH 00/33 v6] Cover", 30000, "").await.unwrap();
+        let ps_cover = db.create_patchset(
+            thread_id, Some("msg_00"), "[PATCH 00/33 v6] Cover", author, 30000, 33, 1, "", "", None, Some(6), 0
+        ).await.unwrap().unwrap();
+
+        // 2. Patch 1: [PATCH 01/33] -> v1 (implicit) -> Pass None
+        db.create_message("msg_01", thread_id, None, author, "[PATCH 01/33] Part 1", 30005, "").await.unwrap();
+        let ps_p1 = db.create_patchset(
+            thread_id, None, "[PATCH 01/33] Part 1", author, 30005, 33, 1, "", "", None, None, 1
+        ).await.unwrap().unwrap();
+
+        // With strict checking, this might fail (assert_eq will panic if not merged).
+        // If it fails, we need to relax the check in `create_patchset`.
+        assert_eq!(ps_cover, ps_p1, "Should merge explicit v6 cover with implicit v1 patch if context matches");
+    }
+
+    #[tokio::test]
+    async fn test_version_mismatch_no_merge() {
+        let db = setup_db().await;
+        let thread_id = db.create_thread("root_diff_ver", "Version Mismatch", 40000).await.unwrap();
+        let author = "Author Diff <diff@example.com>";
+
+        // v5
+        db.create_message("msg_v5", thread_id, None, author, "[PATCH v5 1/2] Part 1", 40000, "").await.unwrap();
+        let ps_v5 = db.create_patchset(
+            thread_id, None, "[PATCH v5 1/2] Part 1", author, 40000, 2, 1, "", "", None, Some(5), 1
+        ).await.unwrap().unwrap();
+
+        // v6 (Close time)
+        db.create_message("msg_v6", thread_id, None, author, "[PATCH v6 1/2] Part 1", 40010, "").await.unwrap();
+        let ps_v6 = db.create_patchset(
+            thread_id, None, "[PATCH v6 1/2] Part 1", author, 40010, 2, 1, "", "", None, Some(6), 1
+        ).await.unwrap().unwrap();
+
+        assert_ne!(ps_v5, ps_v6, "Should NOT merge different explicit versions (v5 vs v6)");
     }
 }
