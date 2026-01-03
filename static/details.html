@@ -41,8 +41,11 @@
 
             try {
                 // The ID is passed as message_id, which might contain characters needing encoding
-                const res = await fetch(`/api/patchsets/${encodeURIComponent(id)}`);
-                if (!res.ok) throw new Error('Not found');
+                const res = await fetch(`/api/patch/${encodeURIComponent(id)}`);
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+                }
                 const data = await res.json();
                 render(data);
             } catch (e) {

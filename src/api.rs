@@ -63,12 +63,19 @@ pub async fn run_server(
         State(state): State<Arc<AppState>>,
         axum::extract::Path(id): axum::extract::Path<String>,
     ) -> Result<Json<serde_json::Value>, StatusCode> {
-        match state.db.get_patchset_details(&id).await {        Ok(Some(details)) => Ok(Json(details)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        info!("Fetching details for message_id: {}", id);
+        match state.db.get_patchset_details(&id).await {
+            Ok(Some(details)) => Ok(Json(details)),
+            Ok(None) => {
+                info!("Message not found: {}", id);
+                Err(StatusCode::NOT_FOUND)
+            },
+            Err(e) => {
+                info!("Database error: {}", e);
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            },
+        }
     }
-}
-
 async fn get_stats() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
