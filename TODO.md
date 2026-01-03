@@ -38,5 +38,5 @@
 - [ ] Implement outbound SMTP for review replies.
 - [ ] Implement inbound email processing (reply tracking).
 - [ ] Add in-memory LRU cache for recent articles.
-- [ ] Stress test system with 20k/day message volume simulation.
+- [x] Stress test system with 20k/day message volume simulation (Verified with 100k messages).
 - [ ] Final performance tuning and security hardening.
