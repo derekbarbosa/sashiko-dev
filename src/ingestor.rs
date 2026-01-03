@@ -15,7 +15,7 @@ pub struct Ingestor {
     settings: Settings,
     db: Arc<Database>,
     sender: Sender<Event>,
-    n_last: Option<usize>,
+    download: Option<usize>,
     no_nntp: bool,
 }
 
@@ -24,20 +24,20 @@ impl Ingestor {
         settings: Settings,
         db: Arc<Database>,
         sender: Sender<Event>,
-        n_last: Option<usize>,
+        download: Option<usize>,
         no_nntp: bool,
     ) -> Self {
         Self {
             settings,
             db,
             sender,
-            n_last,
+            download,
             no_nntp,
         }
     }
 
     pub async fn run(&self) -> Result<()> {
-        if let Some(n) = self.n_last {
+        if let Some(n) = self.download {
             info!(
                 "Bootstrap requested: downloading/ingesting last {} messages from git archive",
                 n

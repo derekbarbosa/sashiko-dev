@@ -24,7 +24,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 struct Cli {
     /// Number of last messages to ingest
     #[arg(long)]
-    n_last: Option<usize>,
+    download: Option<usize>,
 
     /// Disable NNTP ingestor
     #[arg(long)]
@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Ingestor
-    let ingestor = Ingestor::new(settings.clone(), db.clone(), tx, cli.n_last, cli.no_nntp);
+    let ingestor = Ingestor::new(settings.clone(), db.clone(), tx, cli.download, cli.no_nntp);
     tokio::spawn(async move {
         if let Err(e) = ingestor.run().await {
             error!("Ingestor fatal error: {}", e);
@@ -140,14 +140,14 @@ mod tests {
 
     #[test]
     fn test_cli_parsing() {
-        let args = vec!["sashiko", "--n-last", "100", "--no-nntp"];
+        let args = vec!["sashiko", "--download", "100", "--no-nntp"];
         let cli = Cli::parse_from(args);
-        assert_eq!(cli.n_last, Some(100));
+        assert_eq!(cli.download, Some(100));
         assert!(cli.no_nntp);
 
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);
-        assert_eq!(cli.n_last, None);
+        assert_eq!(cli.download, None);
         assert!(!cli.no_nntp);
     }
 }
