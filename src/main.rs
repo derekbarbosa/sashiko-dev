@@ -31,6 +31,10 @@ struct Cli {
     #[arg(long)]
     no_nntp: bool,
 
+    /// Exit after processing all messages (useful for benchmarking)
+    #[arg(long)]
+    exit_after_ingest: bool,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -133,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // DB Worker (Transactional Batching)
     let worker_db = db.clone();
-    tokio::spawn(async move {
+    let db_worker_handle = tokio::spawn(async move {
         info!("DB Worker started");
 
         let mut buffer = Vec::with_capacity(100);
@@ -181,9 +185,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Keep the main thread running
-    tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    if cli.exit_after_ingest {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Shutting down...");
+            }
+            _ = db_worker_handle => {
+                info!("Ingestion complete. Exiting.");
+            }
+        }
+    } else {
+        // Keep the main thread running
+        tokio::signal::ctrl_c().await?;
+        info!("Shutting down...");
+    }
 
     Ok(())
 }
