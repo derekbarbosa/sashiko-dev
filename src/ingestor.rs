@@ -57,16 +57,43 @@ impl Ingestor {
         Ok(())
     }
 
-    async fn run_git_bootstrap(&self, n: usize) -> Result<()> {
+    async fn run_git_bootstrap(&self, limit: usize) -> Result<()> {
+        let mut remaining = limit;
+
         for group in &self.settings.nntp.groups {
             match self.resolve_git_info(group).await {
-                Ok((url, path)) => {
-                    info!("Bootstrapping group {} from {} to {:?}", group, url, path);
+                Ok((epochs, base_path)) => {
+                    for (epoch, url) in epochs {
+                        if remaining == 0 {
+                            break;
+                        }
 
-                    if let Err(e) = self.bootstrap_repo(&url, &path, n).await {
-                        error!("Failed to bootstrap group {}: {}", group, e);
-                    } else if let Err(e) = self.ingest_git_objects(group, &path, Some(n)).await {
-                        error!("Failed to ingest objects for group {}: {}", group, e);
+                        let epoch_path = base_path.join(epoch.to_string());
+                        info!(
+                            "Bootstrapping group {} epoch {} from {} to {:?}",
+                            group, epoch, url, epoch_path
+                        );
+
+                        if let Err(e) = self.bootstrap_repo(&url, &epoch_path, remaining).await {
+                            error!("Failed to bootstrap group {} epoch {}: {}", group, epoch, e);
+                            continue;
+                        } else {
+                            match self
+                                .ingest_git_objects(group, &epoch_path, Some(remaining))
+                                .await
+                            {
+                                Ok(count) => {
+                                    info!("Ingested {} messages from epoch {}", count, epoch);
+                                    remaining = remaining.saturating_sub(count);
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to ingest objects for group {} epoch {}: {}",
+                                        group, epoch, e
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -77,7 +104,10 @@ impl Ingestor {
         Ok(())
     }
 
-    async fn resolve_git_info(&self, group: &str) -> Result<(String, std::path::PathBuf)> {
+    async fn resolve_git_info(
+        &self,
+        group: &str,
+    ) -> Result<(Vec<(i32, String)>, std::path::PathBuf)> {
         // Dynamic path: archives/<group_name>
         let path = std::path::PathBuf::from("archives").join(group);
 
@@ -91,13 +121,13 @@ impl Ingestor {
             group.split('.').next_back().unwrap_or(group)
         };
 
-        let url = self.find_latest_epoch(list_id).await?;
+        let epochs = self.find_epoch_urls(list_id).await?;
 
-        Ok((url, path))
+        Ok((epochs, path))
     }
 
-    async fn find_latest_epoch(&self, list_id: &str) -> Result<String> {
-        info!("Fetching manifest to find latest epoch for {}", list_id);
+    async fn find_epoch_urls(&self, list_id: &str) -> Result<Vec<(i32, String)>> {
+        info!("Fetching manifest to find epochs for {}", list_id);
 
         let output = Command::new("bash")
             .arg("-c")
@@ -114,41 +144,30 @@ impl Ingestor {
             .as_object()
             .ok_or_else(|| anyhow!("Manifest is not a JSON object"))?;
 
-        let mut max_epoch = -1;
-        let mut best_url = String::new();
-
-        // Pattern: /list_id/git/N.git
+        let mut epochs = Vec::new();
         let prefix = format!("/{}/git/", list_id);
 
         for (key, _val) in map {
             if key.starts_with(&prefix) && key.ends_with(".git") {
-                // extract N
-                // key looks like /lkml/git/0.git
-                // suffix is 0
                 let suffix = &key[prefix.len()..key.len() - 4];
                 if let Ok(epoch) = suffix.parse::<i32>() {
-                    if epoch > max_epoch {
-                        max_epoch = epoch;
-                        best_url = format!("https://lore.kernel.org{}", key);
-                    }
+                    epochs.push((epoch, format!("https://lore.kernel.org{}", key)));
                 }
             }
         }
 
-        if max_epoch == -1 {
-            // Fallback to 0.git if nothing found
+        epochs.sort_by(|a, b| b.0.cmp(&a.0)); // Descending order
+
+        if epochs.is_empty() {
             warn!(
                 "Could not find any epochs for {}, defaulting to 0.git",
                 list_id
             );
-            return Ok(format!("https://lore.kernel.org/{}/0.git", list_id));
+            epochs.push((0, format!("https://lore.kernel.org/{}/0.git", list_id)));
         }
 
-        info!(
-            "Found latest epoch {} for {}: {}",
-            max_epoch, list_id, best_url
-        );
-        Ok(best_url)
+        info!("Found {} epochs for {}", epochs.len(), list_id);
+        Ok(epochs)
     }
 
     async fn bootstrap_repo(&self, url: &str, path: &std::path::Path, n: usize) -> Result<()> {
@@ -310,7 +329,7 @@ impl Ingestor {
         group_name: &str,
         path: &std::path::Path,
         limit: Option<usize>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         info!("Starting Git Ingestion from {:?}", path);
 
         // 1. Get list of all object SHAs
@@ -424,6 +443,6 @@ impl Ingestor {
             "Git ingestion completed. Scanned {} objects, processed {} blobs.",
             count, processed_blobs
         );
-        Ok(())
+        Ok(processed_blobs)
     }
 }
