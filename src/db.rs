@@ -692,7 +692,8 @@ impl Database {
     pub async fn get_patchset_details(&self, id: i64) -> Result<Option<serde_json::Value>> {
         let mut rows = self.conn.query(
             "SELECT p.id, p.subject, p.status, p.to_recipients, p.cc_recipients, 
-                    b.repo_url, b.branch, b.last_known_commit, p.author, p.date, p.cover_letter_message_id, p.thread_id
+                    b.repo_url, b.branch, b.last_known_commit, p.author, p.date, p.cover_letter_message_id, p.thread_id,
+                    p.total_parts, p.received_parts
              FROM patchsets p 
              LEFT JOIN baselines b ON p.baseline_id = b.id
              WHERE p.id = ?",
@@ -712,6 +713,8 @@ impl Database {
             let date: Option<i64> = row.get(9).ok();
             let mid: Option<String> = row.get(10).ok();
             let thread_id: Option<i64> = row.get(11).ok();
+            let total_parts: Option<u32> = row.get(12).ok();
+            let received_parts: Option<u32> = row.get(13).ok();
 
             // Fetch reviews
             let mut reviews = Vec::new();
@@ -736,17 +739,26 @@ impl Database {
                 }));
             }
 
-            // Fetch patches
+            // Fetch patches with subject and msg_db_id
             let mut patches = Vec::new();
-            let mut patch_rows = self.conn.query(
-                "SELECT id, message_id, part_index FROM patches WHERE patchset_id = ? ORDER BY part_index ASC",
-                libsql::params![pid]
-            ).await?;
+            let mut patch_rows = self
+                .conn
+                .query(
+                    "SELECT p.id, p.message_id, p.part_index, m.id, m.subject 
+                 FROM patches p
+                 LEFT JOIN messages m ON p.message_id = m.message_id
+                 WHERE p.patchset_id = ? 
+                 ORDER BY p.part_index ASC",
+                    libsql::params![pid],
+                )
+                .await?;
             while let Ok(Some(p)) = patch_rows.next().await {
                 patches.push(serde_json::json!({
                     "id": p.get::<i64>(0)?,
                     "message_id": p.get::<String>(1)?,
                     "part_index": p.get::<Option<i64>>(2).ok(),
+                    "msg_db_id": p.get::<Option<i64>>(3).ok(),
+                    "subject": p.get::<Option<String>>(4).ok(),
                 }));
             }
 
@@ -777,6 +789,8 @@ impl Database {
                 "status": status,
                 "to": to,
                 "cc": cc,
+                "total_parts": total_parts,
+                "received_parts": received_parts,
                 "baseline": {
                     "repo_url": repo_url,
                     "branch": branch,

@@ -94,12 +94,18 @@
             let patchesHtml = '';
             if (data.patches && data.patches.length > 0) {
                  patchesHtml = `
-                    <ul>
-                        ${data.patches.map(p => `<li>Part ${p.part_index}: ${p.message_id}</li>`).join('')}
-                    </ul>
+                    <div class="kv" style="align-items: flex-start;">
+                        <div class="label">Patches:</div>
+                        <div>
+                            ${data.patches.map(p => {
+                                const link = p.msg_db_id ? `<a href="/static/message.html?id=${p.msg_db_id}">${p.subject || '(no subject)'}</a>` : (p.subject || p.message_id);
+                                return `<div>${p.part_index}: ${link}</div>`;
+                            }).join('')}
+                        </div>
+                    </div>
                  `;
             } else {
-                patchesHtml = '<p>No patches found.</p>';
+                patchesHtml = '<div class="kv"><div class="label">Patches:</div><div>None</div></div>';
             }
 
             let threadHtml = '';
@@ -140,23 +146,17 @@
             document.getElementById('content').innerHTML = `
                 <div class="section">
                     <h2>Metadata</h2>
-                    <div class="kv"><div class="label">Message ID:</div><div>${data.message_id || '-'} <button class="copy-btn" onclick="copyToClipboard('${data.message_id}')">📋</button></div></div>
                     <div class="kv"><div class="label">Subject:</div><div>${data.subject || '(no subject)'}</div></div>
                     <div class="kv"><div class="label">Author:</div><div>${data.author || 'unknown'}</div></div>
                     <div class="kv"><div class="label">Date:</div><div>${date}</div></div>
-                    <div class="kv"><div class="label">To:</div><div>${data.to || '-'}</div></div>
-                    <div class="kv"><div class="label">Cc:</div><div>${data.cc || '-'}</div></div>
                     <div class="kv"><div class="label">Status:</div><div class="status-${data.status}">${data.status || 'Pending'}</div></div>
+                    <div class="kv"><div class="label">Progress:</div><div>${data.received_parts || 0} / ${data.total_parts || 0}</div></div>
+                    ${patchesHtml}
                 </div>
 
                 <div class="section">
                     <h2>Git Baseline</h2>
                     ${baselineHtml}
-                </div>
-
-                <div class="section">
-                    <h2>Patches</h2>
-                    ${patchesHtml}
                 </div>
 
                 <div class="section">
