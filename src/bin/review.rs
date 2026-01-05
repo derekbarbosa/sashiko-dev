@@ -25,6 +25,10 @@ struct Args {
     #[arg(long)]
     baseline: Option<String>,
 
+    /// Parent directory for creating worktrees.
+    #[arg(long)]
+    worktree_dir: Option<PathBuf>,
+
     #[arg(long, default_value = "review-prompts")]
     prompts: PathBuf,
 
@@ -61,7 +65,7 @@ async fn main() -> Result<()> {
 
     let repo_path = PathBuf::from(&settings.git.repository_path);
     // Use provided or default baseline
-    let worktree = GitWorktree::new(&repo_path, &baseline).await?;
+    let worktree = GitWorktree::new(&repo_path, &baseline, args.worktree_dir.as_deref()).await?;
 
     info!("Created worktree at {:?}", worktree.path);
 

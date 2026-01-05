@@ -1119,6 +1119,38 @@ impl Database {
         }
         Ok(diffs)
     }
+
+    pub async fn get_pending_patchsets(&self, limit: usize) -> Result<Vec<PatchsetRow>> {
+        let mut rows = self.conn.query(
+            "SELECT id, subject, status, thread_id, author, date, cover_letter_message_id, total_parts, received_parts 
+             FROM patchsets WHERE status = 'Pending' ORDER BY date ASC LIMIT ?",
+            libsql::params![limit as i64],
+        ).await?;
+
+        let mut patchsets = Vec::new();
+        while let Ok(Some(row)) = rows.next().await {
+            patchsets.push(PatchsetRow {
+                id: row.get(0)?,
+                subject: row.get(1).ok(),
+                status: row.get(2).ok(),
+                thread_id: row.get(3).ok(),
+                author: row.get(4).ok(),
+                date: row.get(5).ok(),
+                message_id: row.get(6).ok(),
+                total_parts: row.get(7).ok(),
+                received_parts: row.get(8).ok(),
+            });
+        }
+        Ok(patchsets)
+    }
+
+    pub async fn update_patchset_status(&self, id: i64, status: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE patchsets SET status = ? WHERE id = ?",
+            libsql::params![status, id],
+        ).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

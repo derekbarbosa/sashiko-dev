@@ -39,12 +39,20 @@ pub struct GitSettings {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct ReviewSettings {
+    pub concurrency: usize,
+    pub worktree_dir: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct Settings {
     pub database: DatabaseSettings,
     pub nntp: NntpSettings,
     pub ai: AiSettings,
     pub server: ServerSettings,
     pub git: GitSettings,
+    pub review: ReviewSettings,
 }
 
 impl Settings {

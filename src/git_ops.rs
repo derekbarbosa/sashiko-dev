@@ -13,8 +13,15 @@ pub struct GitWorktree {
 
 impl GitWorktree {
     #[allow(dead_code)]
-    pub async fn new(repo_path: &Path, commit_hash: &str) -> Result<Self> {
-        let temp_dir = TempDir::new()?;
+    pub async fn new(repo_path: &Path, commit_hash: &str, parent_dir: Option<&Path>) -> Result<Self> {
+        let temp_dir = if let Some(parent) = parent_dir {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+            tempfile::Builder::new().prefix("sashiko-worktree-").tempdir_in(parent)?
+        } else {
+            TempDir::new()?
+        };
         let path = temp_dir.path().to_path_buf();
 
         info!("Creating worktree at {:?}", path);

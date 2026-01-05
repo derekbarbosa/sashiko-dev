@@ -18,3 +18,7 @@ port = 8080
 
 [git]
 repository_path = "."
+
+[review]
+concurrency = 5
+worktree_dir = "review_trees"

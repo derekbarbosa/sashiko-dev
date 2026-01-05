@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use sashiko::db::Database;
 use sashiko::events::{Event, ParsedArticle};
 use sashiko::ingestor::Ingestor;
+use sashiko::reviewer::Reviewer;
 use sashiko::settings::Settings;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -197,6 +198,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = sashiko::api::run_server(api_settings, api_db).await {
             error!("Web API fatal error: {}", e);
         }
+    });
+
+    // Start Reviewer Service
+    let reviewer = Reviewer::new(db.clone(), settings.clone());
+    tokio::spawn(async move {
+        reviewer.start().await;
     });
 
     if cli.exit_after_ingest {

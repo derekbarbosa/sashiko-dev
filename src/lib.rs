@@ -10,3 +10,4 @@ pub mod nntp;
 pub mod patch;
 pub mod settings;
 pub mod agent;
+pub mod reviewer;
