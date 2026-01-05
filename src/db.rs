@@ -145,6 +145,11 @@ impl Database {
 
         let conn = db.connect()?;
 
+        // Enable WAL mode for better concurrency
+        // PRAGMA journal_mode returns a row (the new mode), so we must use query() instead of execute()
+        let _ = conn.query("PRAGMA journal_mode=WAL;", ()).await?.next().await;
+        let _ = conn.query("PRAGMA busy_timeout = 5000;", ()).await?.next().await;
+
         Ok(Self { conn })
     }
 
