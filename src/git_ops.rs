@@ -234,24 +234,32 @@ pub async fn ensure_remote(repo_path: &Path, name: &str, url: &str, force_fetch:
         std::fs::create_dir_all(&timestamp_dir)?;
     }
     let timestamp_file = timestamp_dir.join(name);
+
+    let age = std::fs::metadata(&timestamp_file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|m| std::time::SystemTime::now().duration_since(m).ok());
     
-    let should_fetch = if just_added || force_fetch {
+    let should_fetch = if just_added {
         true
-    } else if let Ok(metadata) = std::fs::metadata(&timestamp_file) {
-        if let Ok(modified) = metadata.modified() {
-            match std::time::SystemTime::now().duration_since(modified) {
-                Ok(age) => age > std::time::Duration::from_secs(12 * 3600), // 12 hours
-                Err(_) => true, // Time skew, fetch to be safe
-            }
-        } else {
-            true
-        }
     } else {
-        true // File missing
+        match age {
+            Some(a) => {
+                if force_fetch {
+                    // If forced (retry after failure), only fetch if last fetch was > 1 hour ago
+                    a > std::time::Duration::from_secs(3600)
+                } else {
+                    // Standard lazy fetch: 12 hours
+                    a > std::time::Duration::from_secs(12 * 3600)
+                }
+            }
+            None => true, // No timestamp file, fetch to be safe
+        }
     };
 
     if !should_fetch {
-        info!("Skipping fetch for {} (fresh)", name);
+        let reason = if force_fetch { "forced but recently fetched" } else { "fresh" };
+        info!("Skipping fetch for {} ({})", name, reason);
         return Ok(());
     }
 
