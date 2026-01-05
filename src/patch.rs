@@ -118,9 +118,9 @@ pub fn parse_email(raw_email: &[u8]) -> Result<(PatchsetMetadata, Option<Patch>)
 
     // It is a patch or cover letter if:
     // 1. It is NOT a reply (Re: ...)
-    // 2. AND (It contains a diff OR (It has [PATCH]/[RFC] tag AND looks like a series))
-    // This ensures single patches [PATCH] must have a diff, and cover letters are always accepted.
-    let is_patch_or_cover = !is_reply && (has_diff || (has_patch_tag && is_series_metadata));
+    // 2. AND It has [PATCH]/[RFC] tag (strict requirement)
+    // 3. AND (It contains a diff OR it looks like a series cover letter/part)
+    let is_patch_or_cover = !is_reply && has_patch_tag && (has_diff || is_series_metadata);
 
     let metadata = PatchsetMetadata {
         message_id: message_id.clone(),
@@ -218,6 +218,16 @@ mod tests {
         assert!(
             !meta.is_patch_or_cover,
             "Reply with diff should NOT be a patchset"
+        );
+    }
+
+    #[test]
+    fn test_diff_without_patch_tag_ignored() {
+        let raw = b"Message-ID: <diffnopatch>\r\nSubject: Random fix\r\n\r\ndiff --git a/file b/file\nindex...";
+        let (meta, _) = parse_email(raw).unwrap();
+        assert!(
+            !meta.is_patch_or_cover,
+            "Diff without [PATCH] tag should be ignored"
         );
     }
 
