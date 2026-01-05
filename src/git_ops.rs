@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tokio::process::Command;
 use tracing::{info, warn};
+use std::sync::{OnceLock, Mutex};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 
 #[allow(dead_code)]
 pub struct GitWorktree {
@@ -200,11 +204,24 @@ impl Drop for GitWorktree {
     }
 }
 
+fn get_remote_lock(name: &str) -> Arc<AsyncMutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> = OnceLock::new();
+    let map_mutex = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = map_mutex.lock().unwrap();
+    map.entry(name.to_string())
+        .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+        .clone()
+}
+
 pub async fn ensure_remote(repo_path: &Path, name: &str, url: &str, force_fetch: bool) -> Result<()> {
     // 1. Security Check
     if !url.contains("kernel.org") {
         return Err(anyhow!("Refusing to add non-kernel.org remote: {}", url));
     }
+
+    // Acquire lock for this remote
+    let lock = get_remote_lock(name);
+    let _guard = lock.lock().await;
 
     let mut just_added = false;
 
@@ -223,7 +240,10 @@ pub async fn ensure_remote(repo_path: &Path, name: &str, url: &str, force_fetch:
             .output()
             .await?;
         if !add.status.success() {
-            return Err(anyhow!("Failed to add remote: {}", String::from_utf8_lossy(&add.stderr)));
+            let stderr = String::from_utf8_lossy(&add.stderr);
+            if !stderr.contains("already exists") {
+                return Err(anyhow!("Failed to add remote: {}", stderr));
+            }
         }
         just_added = true;
     }
