@@ -31,6 +31,12 @@ pub struct OpenAiProvider {
 }
 
 #[allow(dead_code)]
+impl Default for OpenAiProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAiProvider {
     pub fn new() -> Self {
         let api_key = std::env::var("LLM_API_KEY").unwrap_or_default();
