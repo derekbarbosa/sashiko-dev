@@ -301,12 +301,9 @@ impl Database {
 
     async fn try_add_column(&self, table: &str, column: &str, type_def: &str) -> Result<()> {
         let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, type_def);
-        if let Err(e) = self.conn.execute(&sql, ()).await {
+        if let Err(_e) = self.conn.execute(&sql, ()).await {
             // Ignore error if column likely exists (duplicate column name)
-            info!(
-                "Migration: Column {} likely exists or error adding: {}",
-                column, e
-            );
+            // info!("Migration: Column {} likely exists or error adding: {}", column, e);
         } else {
             info!("Migration: Added column {} to {}", column, table);
         }
