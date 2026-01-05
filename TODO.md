@@ -37,6 +37,7 @@
 - [x] **Task**: Integrate reviewer tool into main Sashiko loop (concurrent processing).
 - [x] **Task**: Implement Chain-of-Thought prompting and structured JSON output for reviews.
 - [x] **Task**: Implement retry logic for AI review generation failures when patches apply successfully.
+- [x] **Task**: Implement `review-inline.txt` support for detailed inline comments.
 - [ ] **Task**: Implement "Critic" self-correction loop for review validation.
 
 ## Phase 4: Web API & Frontend
