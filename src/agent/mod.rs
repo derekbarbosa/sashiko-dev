@@ -116,21 +116,16 @@ impl Agent {
         }
     }
 
-    pub async fn run(&mut self, patchset: Value) -> Result<AgentResult> {
+    pub async fn run(&mut self, _patchset: Value) -> Result<AgentResult> {
         let system_prompt = self.prompts.get_system_prompt().await?;
 
         let initial_user_message = if self.cache_name.is_some() {
             // Cache active: The protocol is in the cache.
             format!(
-                "Run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
-                 The 'top commit' to analyze is:\n\
-                 Subject: {}\n\
-                 Author: {}\n\n\
-                 Follow the 'Review Protocol' (review-core.md) and all Subsystem Guidelines available in your context.\n\
-                 IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that.",
-                patchset["subject"].as_str().unwrap_or("Unknown"),
-                patchset["author"].as_str().unwrap_or("Unknown")
-            )
+                "You're an expert Linux kernel developer and maintainer with deep knowledge of Linux, Operating Systems, modern hardware and Linux community standards and processes.\nRun a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
+                 Follow the 'Review Protocol' and all Technical patterns and Subsystem Guidelines available in your context.\n\
+		 Don't try to search for prompts in files, they all are available in your context.\n\
+                 IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that.")
         } else {
             // Legacy/No-Cache: Inject full context
             let review_core =
@@ -139,15 +134,10 @@ impl Agent {
                     .unwrap_or_else(|_| "Deep dive regression analysis protocol.".to_string());
 
             format!(
-                "Using the prompt review-prompts/review-core.md run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
-                 The 'top commit' to analyze is:\n\
-                 Subject: {}\n\
-                 Author: {}\n\n\
+                "You're an expert Linux kernel developer and maintainer with deep knowledge of Linux, Operating Systems, modern hardware and Linux community standards and processes. Using the prompt review-prompts/review-core.md run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
                  ## Review Protocol (review-core.md)\n\
                  {}\n\n\
                  IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that.",
-                patchset["subject"].as_str().unwrap_or("Unknown"),
-                patchset["author"].as_str().unwrap_or("Unknown"),
                 review_core
             )
         };
