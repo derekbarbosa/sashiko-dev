@@ -65,12 +65,15 @@ impl ToolBox {
                 },
                 FunctionDeclaration {
                     name: "git_show".to_string(),
-                    description: "Show various types of objects (blobs, trees, tags and commits)."
+                    description: "Show various types of objects (blobs, trees, tags and commits). Supports line filtering for blobs and diff suppression for commits."
                         .to_string(),
                     parameters: json!({
                          "type": "object",
                          "properties": {
-                             "object": { "type": "string", "description": "The object to show (e.g. 'HEAD:README.md')." }
+                             "object": { "type": "string", "description": "The object to show (e.g. 'HEAD:README.md' or 'HEAD')." },
+                             "suppress_diff": { "type": "boolean", "description": "If true, suppresses the diff output for commits (shows only metadata). Useful for checking commit details cheaply." },
+                             "start_line": { "type": "integer", "description": "1-based start line (optional). Useful for reading specific parts of a file (blob)." },
+                             "end_line": { "type": "integer", "description": "1-based end line (optional)." }
                          },
                          "required": ["object"]
                     }),
@@ -292,13 +295,20 @@ impl ToolBox {
         let object = args["object"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing object"))?;
+        let suppress_diff = args["suppress_diff"].as_bool().unwrap_or(false);
+        let start_line = args["start_line"].as_u64().map(|v| v as usize);
+        let end_line = args["end_line"].as_u64().map(|v| v as usize);
 
-        let output = Command::new("git")
-            .current_dir(&self.worktree_path)
-            .arg("show")
-            .arg(object)
-            .output()
-            .await?;
+        let mut cmd = Command::new("git");
+        cmd.current_dir(&self.worktree_path).arg("show");
+
+        if suppress_diff {
+            cmd.arg("--no-patch");
+        }
+
+        cmd.arg(object);
+
+        let output = cmd.output().await?;
 
         if !output.status.success() {
             return Err(anyhow!(
@@ -308,6 +318,32 @@ impl ToolBox {
         }
 
         let content = String::from_utf8_lossy(&output.stdout).to_string();
+
+        // Handle line slicing if requested
+        if start_line.is_some() || end_line.is_some() {
+            let lines: Vec<&str> = content.lines().collect();
+            let total_lines = lines.len();
+            let (start, end) = match (start_line, end_line) {
+                (Some(s), Some(e)) => (s.max(1) - 1, e.min(total_lines)),
+                (Some(s), None) => (s.max(1) - 1, total_lines),
+                (None, Some(e)) => (0, e.min(total_lines)),
+                (None, None) => (0, total_lines),
+            };
+
+            if start >= total_lines {
+                return Ok(json!({ "content": "", "lines_read": 0, "total_lines": total_lines }));
+            }
+
+            let slice = &lines[start..end];
+            let result = slice.join("\n");
+            return Ok(json!({
+                "content": self.truncate_output(result),
+                "total_lines": total_lines,
+                "start_line": start + 1,
+                "end_line": end
+            }));
+        }
+
         Ok(json!({ "content": self.truncate_output(content) }))
     }
 
