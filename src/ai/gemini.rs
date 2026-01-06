@@ -1,9 +1,12 @@
 use crate::ai::{AiProvider, AiRequest, AiResponse};
 use anyhow::Result;
 use async_trait::async_trait;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
+use tokio::time::sleep;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -131,21 +134,43 @@ impl GeminiClient {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
         );
+        let re = Regex::new(r"Please retry in ([0-9.]+)s").unwrap();
 
-        let res = self.client.post(&url).json(&request).send().await?;
+        loop {
+            let res = self.client.post(&url).json(&request).send().await?;
 
-        if !res.status().is_success() {
+            if res.status().is_success() {
+                let body_text = res.text().await?;
+                match serde_json::from_str::<GenerateContentResponse>(&body_text) {
+                    Ok(response) => return Ok(response),
+                    Err(e) => {
+                        anyhow::bail!("Failed to decode response: {}. Body: {}", e, body_text);
+                    }
+                }
+            }
+
+            if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                let error_text = res.text().await?;
+                // Parse retry time from message like:
+                // "Please retry in 26.451181898s."
+                let retry_seconds = if let Some(caps) = re.captures(&error_text) {
+                    caps[1].parse::<f64>().unwrap_or(30.0)
+                } else {
+                    30.0
+                };
+
+                let sleep_duration = Duration::from_secs_f64(retry_seconds + 1.0); // Add 1s buffer
+                tracing::warn!(
+                    "Gemini API quota exceeded. Retrying in {:.2}s...",
+                    sleep_duration.as_secs_f64()
+                );
+                sleep(sleep_duration).await;
+                continue;
+            }
+
             let status = res.status();
             let error_text = res.text().await?;
             anyhow::bail!("Gemini API error ({}): {}", status, error_text);
-        }
-
-        let body_text = res.text().await?;
-        match serde_json::from_str::<GenerateContentResponse>(&body_text) {
-            Ok(response) => Ok(response),
-            Err(e) => {
-                anyhow::bail!("Failed to decode response: {}. Body: {}", e, body_text);
-            }
         }
     }
 }
