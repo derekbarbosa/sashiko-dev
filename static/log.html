@@ -235,7 +235,33 @@
             if (!args || typeof args !== 'object') return { name, args: '' };
 
             const pairs = [];
-            for (const [k, v] of Object.entries(args)) {
+            const entries = Object.entries(args);
+            
+            // Sort keys
+            // Priority: path/file_path > start_* > stop_*/end_* (matching start) > others
+            entries.sort((a, b) => {
+                const keyA = a[0];
+                const keyB = b[0];
+
+                const getPriority = (k) => {
+                    if (k === 'file_path' || k === 'path' || k === 'dir_path') return 0;
+                    if (k === 'start_line') return 10;
+                    if (k === 'end_line' || k === 'stop_line') return 11;
+                    if (k === 'start_column') return 20;
+                    if (k === 'end_column' || k === 'stop_column') return 21;
+                    if (k === 'start_byte') return 30;
+                    if (k === 'end_byte' || k === 'stop_byte') return 31;
+                    return 100;
+                };
+
+                const pA = getPriority(keyA);
+                const pB = getPriority(keyB);
+                
+                if (pA !== pB) return pA - pB;
+                return keyA.localeCompare(keyB);
+            });
+
+            for (const [k, v] of entries) {
                 let valStr = JSON.stringify(v);
                 if (valStr && valStr.length > 50) {
                     valStr = valStr.substring(0, 47) + '...';
