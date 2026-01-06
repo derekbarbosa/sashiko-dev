@@ -8,7 +8,8 @@ mod tools_test;
 use crate::agent::prompts::PromptRegistry;
 use crate::agent::tools::ToolBox;
 use crate::ai::gemini::{
-    Content, FunctionResponse, GenAiClient, GenerateContentRequest, GenerationConfig, Part,
+    Content, FunctionResponse, GenAiClient, GenerateContentRequest,
+    GenerateContentWithCacheRequest, GenerationConfig, Part,
 };
 use crate::ai::token_budget::TokenBudget;
 use anyhow::{Result, anyhow};
@@ -21,6 +22,7 @@ pub struct Agent {
     prompts: PromptRegistry,
     history: Vec<Content>,
     max_input_words: usize,
+    cache_name: Option<String>,
 }
 
 pub struct AgentResult {
@@ -38,6 +40,7 @@ impl Agent {
         tools: ToolBox,
         prompts: PromptRegistry,
         max_input_words: usize,
+        cache_name: Option<String>,
     ) -> Self {
         Self {
             client,
@@ -45,6 +48,7 @@ impl Agent {
             prompts,
             history: Vec::new(),
             max_input_words,
+            cache_name,
         }
     }
 
@@ -114,23 +118,39 @@ impl Agent {
 
     pub async fn run(&mut self, patchset: Value) -> Result<AgentResult> {
         let system_prompt = self.prompts.get_system_prompt().await?;
-        let review_core =
-            tokio::fs::read_to_string(self.prompts.get_base_dir().join("review-core.md"))
-                .await
-                .unwrap_or_else(|_| "Deep dive regression analysis protocol.".to_string());
 
-        let initial_user_message = format!(
-            "Using the prompt review-prompts/review-core.md run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
-             The 'top commit' to analyze is:\n\
-             Subject: {}\n\
-             Author: {}\n\n\
-             ## Review Protocol (review-core.md)\n\
-             {}\n\n\
-             IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that. The JSON output is for the summary, score, and structured findings.",
-            patchset["subject"].as_str().unwrap_or("Unknown"),
-            patchset["author"].as_str().unwrap_or("Unknown"),
-            review_core
-        );
+        let initial_user_message = if self.cache_name.is_some() {
+            // Cache active: The protocol is in the cache.
+            format!(
+                "Run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
+                 The 'top commit' to analyze is:\n\
+                 Subject: {}\n\
+                 Author: {}\n\n\
+                 Follow the 'Review Protocol' (review-core.md) and all Subsystem Guidelines available in your context.\n\
+                 IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that.",
+                patchset["subject"].as_str().unwrap_or("Unknown"),
+                patchset["author"].as_str().unwrap_or("Unknown")
+            )
+        } else {
+            // Legacy/No-Cache: Inject full context
+            let review_core =
+                tokio::fs::read_to_string(self.prompts.get_base_dir().join("review-core.md"))
+                    .await
+                    .unwrap_or_else(|_| "Deep dive regression analysis protocol.".to_string());
+
+            format!(
+                "Using the prompt review-prompts/review-core.md run a deep dive regression analysis of the top commit in the Linux source tree.\n\n\
+                 The 'top commit' to analyze is:\n\
+                 Subject: {}\n\
+                 Author: {}\n\n\
+                 ## Review Protocol (review-core.md)\n\
+                 {}\n\n\
+                 IMPORTANT: If you find regressions, you MUST use the `write_file` tool to create `review-inline.txt` as specified in the protocol. Do not output the detailed inline review content in the final JSON response findings; use the file for that.",
+                patchset["subject"].as_str().unwrap_or("Unknown"),
+                patchset["author"].as_str().unwrap_or("Unknown"),
+                review_core
+            )
+        };
 
         let input_context = format!(
             "System: {}\n\nUser: {}",
@@ -138,7 +158,7 @@ impl Agent {
         );
 
         let system_content = Content {
-            role: "user".to_string(), // Using user role for system instruction placeholder if needed, but we use the field.
+            role: "user".to_string(),
             parts: vec![Part::Text {
                 text: system_prompt,
                 thought_signature: None,
@@ -202,24 +222,37 @@ impl Agent {
             // Enforce token budget by pruning
             self.prune_history(&Some(system_content.clone()));
 
-            let req = GenerateContentRequest {
-                contents: self.history.clone(),
-                tools: Some(vec![self.tools.get_declarations()]),
-                system_instruction: Some(system_content.clone()),
-                generation_config: Some(GenerationConfig {
-                    response_mime_type: Some("application/json".to_string()),
-                    response_schema: Some(response_schema),
-                    temperature: Some(0.2),
-                }),
+            let tools_config = Some(vec![self.tools.get_declarations()]);
+            let generation_config = Some(GenerationConfig {
+                response_mime_type: Some("application/json".to_string()),
+                response_schema: Some(response_schema),
+                temperature: Some(0.2),
+            });
+
+            let resp = if let Some(cache_name) = &self.cache_name {
+                let req = GenerateContentWithCacheRequest {
+                    cached_content: cache_name.clone(),
+                    contents: self.history.clone(),
+                    tools: tools_config,
+                    generation_config,
+                };
+                info!("Sending request to Gemini (cached: {})...", cache_name);
+                self.client.generate_content_with_cache(req).await?
+            } else {
+                let req = GenerateContentRequest {
+                    contents: self.history.clone(),
+                    tools: tools_config,
+                    system_instruction: Some(system_content.clone()),
+                    generation_config,
+                };
+
+                let token_count = self.estimate_history_tokens(&req.system_instruction);
+                info!(
+                    "Sending request to Gemini ({} estimated tokens)...",
+                    token_count
+                );
+                self.client.generate_content(req).await?
             };
-
-            let token_count = self.estimate_history_tokens(&req.system_instruction);
-            info!(
-                "Sending request to Gemini ({} estimated tokens)...",
-                token_count
-            );
-
-            let resp = self.client.generate_content(req).await?;
 
             if let Some(usage) = &resp.usage_metadata {
                 total_tokens_in += usage.prompt_token_count;

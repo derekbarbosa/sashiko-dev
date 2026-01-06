@@ -33,6 +33,10 @@ struct Args {
     /// Previous patches (with lower index) will be applied but not reviewed.
     #[arg(long)]
     review_patch_index: Option<i64>,
+
+    /// Resource name of the Gemini Context Cache to use (e.g. cachedContents/...).
+    #[arg(long)]
+    gemini_cache: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -163,7 +167,13 @@ async fn main() -> Result<()> {
 
             let tools = ToolBox::new(worktree.path.clone(), args.prompts.clone());
             let prompts = PromptRegistry::new(args.prompts.clone());
-            let mut agent = Agent::new(client, tools, prompts, settings.ai.max_input_words);
+            let mut agent = Agent::new(
+                client,
+                tools,
+                prompts,
+                settings.ai.max_input_words,
+                args.gemini_cache,
+            );
 
             let patchset_val = json!({
                 "id": patchset_id,

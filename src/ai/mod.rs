@@ -95,6 +95,7 @@ impl AiProvider for OpenAiProvider {
         })
     }
 }
+pub mod cache;
 pub mod gemini;
 pub mod proxy;
 pub mod token_budget;

@@ -1,4 +1,7 @@
-use crate::ai::gemini::{GeminiClient, GenerateContentRequest, QuotaError};
+use crate::ai::cache::CacheManager;
+use crate::ai::gemini::{
+    GeminiClient, GenerateContentRequest, GenerateContentWithCacheRequest, QuotaError,
+};
 use crate::ai::proxy::QuotaManager;
 use crate::baseline::{BaselineRegistry, BaselineResolution, extract_files_from_diff};
 use crate::db::{AiInteractionParams, Database};
@@ -11,7 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 use tracing::{error, info, warn};
 
 fn generate_id() -> String {
@@ -29,6 +32,8 @@ pub struct Reviewer {
     semaphore: Arc<Semaphore>,
     baseline_registry: Arc<BaselineRegistry>,
     quota_manager: Arc<QuotaManager>,
+    cache_manager: Arc<CacheManager>,
+    active_cache_name: Arc<Mutex<Option<String>>>,
 }
 
 impl Reviewer {
@@ -49,12 +54,25 @@ impl Reviewer {
             }
         };
 
+        // Initialize CacheManager
+        // Assuming prompts are in "review-prompts" in CWD.
+        let prompts_dir = PathBuf::from("review-prompts");
+        let client = Box::new(GeminiClient::new(settings.ai.model.clone()));
+        let cache_manager = Arc::new(CacheManager::new(
+            prompts_dir,
+            client,
+            settings.ai.model.clone(),
+            "3600s".to_string(),
+        ));
+
         Self {
             db,
             settings,
             semaphore: Arc::new(Semaphore::new(concurrency)),
             baseline_registry,
             quota_manager: Arc::new(QuotaManager::new()),
+            cache_manager,
+            active_cache_name: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -63,6 +81,21 @@ impl Reviewer {
             "Starting Reviewer service with concurrency limit: {}",
             self.settings.review.concurrency
         );
+
+        // Ensure Gemini Cache
+        match self.cache_manager.ensure_cache().await {
+            Ok(name) => {
+                info!("Gemini Context Cache initialized: {}", name);
+                let mut guard = self.active_cache_name.lock().await;
+                *guard = Some(name);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to initialize Gemini Context Cache: {}. Proceeding without cache (higher cost/latency).",
+                    e
+                );
+            }
+        }
 
         let worktree_dir = PathBuf::from(&self.settings.review.worktree_dir);
         if worktree_dir.exists() {
@@ -105,6 +138,8 @@ impl Reviewer {
 
         info!("Found {} pending patchsets for review", patchsets.len());
 
+        let current_cache_name = self.active_cache_name.lock().await.clone();
+
         for patchset in patchsets {
             let permit = self.semaphore.clone().acquire_owned().await?;
             let db = self.db.clone();
@@ -113,6 +148,7 @@ impl Reviewer {
             let quota_manager = self.quota_manager.clone();
             let patchset_id = patchset.id;
             let subject = patchset.subject.clone().unwrap_or("Unknown".to_string());
+            let cache_name = current_cache_name.clone();
 
             tokio::spawn(async move {
                 let _permit = permit;
@@ -295,6 +331,7 @@ impl Reviewer {
                                 &baseline_ref,
                                 Some(*index),
                                 quota_manager.clone(),
+                                cache_name.as_deref(),
                             )
                             .await
                             {
@@ -544,6 +581,7 @@ async fn run_review_tool(
     baseline: &str,
     review_index: Option<i64>,
     quota_manager: Arc<QuotaManager>,
+    cache_name: Option<&str>,
 ) -> Result<serde_json::Value> {
     let exe_path = std::env::current_exe()?;
     let bin_dir = exe_path
@@ -573,6 +611,10 @@ async fn run_review_tool(
 
     if let Some(idx) = review_index {
         cmd.arg("--review-patch-index").arg(idx.to_string());
+    }
+
+    if let Some(name) = cache_name {
+        cmd.arg("--gemini-cache").arg(name);
     }
 
     cmd.stdin(Stdio::piped());
@@ -608,91 +650,124 @@ async fn run_review_tool(
         .ok_or_else(|| anyhow::anyhow!("No stdout"))?;
 
     // Perform interaction with timeout
-    let interaction_result = tokio::time::timeout(std::time::Duration::from_secs(1800), async {
-        // Send initial payload
-        let mut input_str = serde_json::to_string(input_payload)?;
-        input_str.push('\n');
-        stdin.write_all(input_str.as_bytes()).await?;
-        stdin.flush().await?;
+    let interaction_result =
+        tokio::time::timeout(std::time::Duration::from_secs(1800), async {
+            // Send initial payload
+            let mut input_str = serde_json::to_string(input_payload)?;
+            input_str.push('\n');
+            stdin.write_all(input_str.as_bytes()).await?;
+            stdin.flush().await?;
 
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        let client = GeminiClient::new(settings.ai.model.clone());
-        let mut final_result: Option<Value> = None;
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            let client = GeminiClient::new(settings.ai.model.clone());
+            let mut final_result: Option<Value> = None;
 
-        while let Ok(Some(line)) = lines.next_line().await {
-            // Try to parse as JSON
-            if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
-                if let Some(type_str) = json_msg.get("type").and_then(|v| v.as_str()) {
-                    if type_str == "ai_request" {
-                        if let Some(payload_val) = json_msg.get("payload") {
-                            if let Ok(req) = serde_json::from_value::<GenerateContentRequest>(
-                                payload_val.clone(),
-                            ) {
-                                // Handle AI Request
-                                // Use QuotaManager loop
-                                let resp_payload = loop {
-                                    quota_manager.wait_for_access().await;
-                                    match client.generate_content_single(&req).await {
-                                        Ok(resp) => break Ok(resp),
-                                        Err(e) => {
-                                            if let Some(qe) = e.downcast_ref::<QuotaError>() {
-                                                quota_manager.report_quota_error(qe.0).await;
-                                                continue;
+            while let Ok(Some(line)) = lines.next_line().await {
+                // Try to parse as JSON
+                if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
+                    if let Some(type_str) = json_msg.get("type").and_then(|v| v.as_str()) {
+                        if type_str == "ai_request" {
+                            if let Some(payload_val) = json_msg.get("payload") {
+                                if let Ok(req) = serde_json::from_value::<GenerateContentRequest>(
+                                    payload_val.clone(),
+                                ) {
+                                    // Handle Standard AI Request
+                                    let resp_payload = loop {
+                                        quota_manager.wait_for_access().await;
+                                        match client.generate_content_single(&req).await {
+                                            Ok(resp) => break Ok(resp),
+                                            Err(e) => {
+                                                if let Some(qe) = e.downcast_ref::<QuotaError>() {
+                                                    quota_manager.report_quota_error(qe.0).await;
+                                                    continue;
+                                                }
+                                                break Err(e);
                                             }
-                                            break Err(e);
                                         }
+                                    };
+
+                                    let reply = match resp_payload {
+                                        Ok(p) => json!({ "type": "ai_response", "payload": p }),
+                                        Err(e) => {
+                                            json!({ "type": "error", "payload": e.to_string() })
+                                        }
+                                    };
+                                    let mut reply_str = serde_json::to_string(&reply)?;
+                                    reply_str.push('\n');
+                                    if let Err(e) = stdin.write_all(reply_str.as_bytes()).await {
+                                        error!("Failed to write AI response to child: {}", e);
+                                        break;
                                     }
-                                };
-
-                                let reply = match resp_payload {
-                                    Ok(p) => json!({
-                                        "type": "ai_response",
-                                        "payload": p
-                                    }),
-                                    Err(e) => json!({
-                                        "type": "error",
-                                        "payload": e.to_string()
-                                    }),
-                                };
-
-                                let mut reply_str = serde_json::to_string(&reply)?;
-                                reply_str.push('\n');
-                                if let Err(e) = stdin.write_all(reply_str.as_bytes()).await {
-                                    error!("Failed to write AI response to child: {}", e);
-                                    break; // Child probably died
+                                    let _ = stdin.flush().await;
                                 }
-                                let _ = stdin.flush().await;
+                            }
+                        } else if type_str == "ai_request_with_cache" {
+                            if let Some(payload_val) = json_msg.get("payload") {
+                                if let Ok(req) =
+                                    serde_json::from_value::<GenerateContentWithCacheRequest>(
+                                        payload_val.clone(),
+                                    )
+                                {
+                                    // Handle Cached AI Request
+                                    let resp_payload = loop {
+                                        quota_manager.wait_for_access().await;
+                                        match client.generate_content_with_cache_single(&req).await
+                                        {
+                                            Ok(resp) => break Ok(resp),
+                                            Err(e) => {
+                                                if let Some(qe) = e.downcast_ref::<QuotaError>() {
+                                                    quota_manager.report_quota_error(qe.0).await;
+                                                    continue;
+                                                }
+                                                break Err(e);
+                                            }
+                                        }
+                                    };
+
+                                    let reply = match resp_payload {
+                                        Ok(p) => json!({ "type": "ai_response", "payload": p }),
+                                        Err(e) => {
+                                            json!({ "type": "error", "payload": e.to_string() })
+                                        }
+                                    };
+                                    let mut reply_str = serde_json::to_string(&reply)?;
+                                    reply_str.push('\n');
+                                    if let Err(e) = stdin.write_all(reply_str.as_bytes()).await {
+                                        error!("Failed to write AI response to child: {}", e);
+                                        break;
+                                    }
+                                    let _ = stdin.flush().await;
+                                }
+                            }
+                        } else {
+                            // Unknown type? Assume it's result if it matches result structure?
+                            if json_msg.get("patchset_id").is_some() {
+                                final_result = Some(json_msg);
+                                break;
                             }
                         }
                     } else {
-                        // Unknown type? Assume it's result if it matches result structure?
+                        // No type. Result?
                         if json_msg.get("patchset_id").is_some() {
                             final_result = Some(json_msg);
                             break;
                         }
                     }
                 } else {
-                    // No type. Result?
-                    if json_msg.get("patchset_id").is_some() {
-                        final_result = Some(json_msg);
-                        break;
-                    }
+                    // Non-JSON line? Log it
+                    warn!("Review tool stdout: {}", line);
                 }
-            } else {
-                // Non-JSON line? Log it
-                warn!("Review tool stdout: {}", line);
             }
-        }
 
-        // Return result
-        if let Some(res) = final_result {
-            Ok(res)
-        } else {
-            Err(anyhow::anyhow!("Review tool finished without valid result"))
-        }
-    })
-    .await;
+            // Return result
+            if let Some(res) = final_result {
+                Ok(res)
+            } else {
+                Err(anyhow::anyhow!("Review tool finished without valid result"))
+            }
+        })
+        .await;
 
     // Handle timeout and child process cleanup
     match interaction_result {

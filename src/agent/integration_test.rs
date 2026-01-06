@@ -2,8 +2,9 @@
 mod tests {
     use crate::agent::{Agent, prompts::PromptRegistry, tools::ToolBox};
     use crate::ai::gemini::{
-        Candidate, Content, FunctionCall, GenAiClient, GenerateContentRequest,
-        GenerateContentResponse, Part, UsageMetadata,
+        CachedContent, Candidate, Content, CreateCachedContentRequest, FunctionCall, GenAiClient,
+        GenerateContentRequest, GenerateContentResponse, GenerateContentWithCacheRequest, Part,
+        UsageMetadata,
     };
     use async_trait::async_trait;
     use serde_json::json;
@@ -57,6 +58,24 @@ mod tests {
                     extra: None,
                 }),
             })
+        }
+
+        async fn create_cached_content(
+            &self,
+            _request: CreateCachedContentRequest,
+        ) -> anyhow::Result<CachedContent> {
+            unimplemented!("Mock not implemented for create_cached_content")
+        }
+
+        async fn list_cached_contents(&self) -> anyhow::Result<Vec<CachedContent>> {
+            Ok(vec![])
+        }
+
+        async fn generate_content_with_cache(
+            &self,
+            _request: GenerateContentWithCacheRequest,
+        ) -> anyhow::Result<GenerateContentResponse> {
+            unimplemented!("Mock not implemented for generate_content_with_cache")
         }
     }
 
@@ -134,7 +153,7 @@ mod tests {
 
         let tools = ToolBox::new(linux_path, prompts_path);
         let prompts = PromptRegistry::new(PathBuf::from("review-prompts"));
-        let mut agent = Agent::new(client, tools, prompts, 150_000);
+        let mut agent = Agent::new(client, tools, prompts, 150_000, None);
 
         let patchset = json!({
             "subject": "Test Patch",
@@ -171,7 +190,7 @@ mod tests {
 
         let tools = ToolBox::new(linux_path, prompts_path);
         let prompts = PromptRegistry::new(PathBuf::from("review-prompts"));
-        let mut agent = Agent::new(client, tools, prompts, 150_000);
+        let mut agent = Agent::new(client, tools, prompts, 150_000, None);
 
         let patchset = json!({
             "subject": "Docs update",

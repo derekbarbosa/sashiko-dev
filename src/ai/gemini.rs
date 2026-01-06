@@ -110,11 +110,76 @@ pub struct UsageMetadata {
     pub extra: Option<std::collections::HashMap<String, Value>>,
 }
 
+// --- Caching API Types ---
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<Vec<Content>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expire_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCachedContentRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<Vec<Content>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateContentWithCacheRequest {
+    pub cached_content: String, // Resource name
+    pub contents: Vec<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_config: Option<GenerationConfig>,
+}
+
 #[async_trait]
 pub trait GenAiClient: Send + Sync {
     async fn generate_content(
         &self,
         request: GenerateContentRequest,
+    ) -> Result<GenerateContentResponse>;
+
+    async fn create_cached_content(
+        &self,
+        request: CreateCachedContentRequest,
+    ) -> Result<CachedContent>;
+
+    async fn list_cached_contents(&self) -> Result<Vec<CachedContent>>;
+
+    async fn generate_content_with_cache(
+        &self,
+        request: GenerateContentWithCacheRequest,
     ) -> Result<GenerateContentResponse>;
 }
 
@@ -151,9 +216,30 @@ impl GeminiClient {
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             self.model, self.api_key
         );
-        let re = Regex::new(r"Please retry in ([0-9.]+)s").unwrap();
+        self.post_request(&url, request).await
+    }
 
-        let res = self.client.post(&url).json(request).send().await?;
+    pub async fn generate_content_with_cache_single(
+        &self,
+        request: &GenerateContentWithCacheRequest,
+    ) -> Result<GenerateContentResponse> {
+        // When using cached content, the URL model parameter is effectively ignored by the backend
+        // in favor of the 'cached_content' field, but we still need a valid endpoint.
+        // The documentation says: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            self.model, self.api_key
+        );
+        self.post_request(&url, request).await
+    }
+
+    async fn post_request<T: Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+    ) -> Result<GenerateContentResponse> {
+        let re = Regex::new(r"Please retry in ([0-9.]+)s").unwrap();
+        let res = self.client.post(url).json(body).send().await?;
 
         if res.status().is_success() {
             let body_text = res.text().await?;
@@ -172,7 +258,6 @@ impl GeminiClient {
             } else {
                 30.0
             };
-
             return Err(anyhow::Error::new(QuotaError(Duration::from_secs_f64(
                 retry_seconds + 1.0,
             ))));
@@ -208,6 +293,73 @@ impl GenAiClient for GeminiClient {
             }
         }
     }
+
+    async fn create_cached_content(
+        &self,
+        request: CreateCachedContentRequest,
+    ) -> Result<CachedContent> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/cachedContents?key={}",
+            self.api_key
+        );
+        let res = self.client.post(&url).json(&request).send().await?;
+
+        if res.status().is_success() {
+            let body = res.text().await?;
+            let content: CachedContent = serde_json::from_str(&body)?;
+            Ok(content)
+        } else {
+            let status = res.status();
+            let err = res.text().await?;
+            anyhow::bail!("Failed to create cached content ({}): {}", status, err);
+        }
+    }
+
+    async fn list_cached_contents(&self) -> Result<Vec<CachedContent>> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/cachedContents?key={}",
+            self.api_key
+        );
+        let res = self.client.get(&url).send().await?;
+
+        if res.status().is_success() {
+            let body = res.text().await?;
+            #[derive(Deserialize)]
+            struct ListResponse {
+                #[serde(rename = "cachedContents")]
+                cached_contents: Option<Vec<CachedContent>>,
+            }
+            let list: ListResponse = serde_json::from_str(&body)?;
+            Ok(list.cached_contents.unwrap_or_default())
+        } else {
+            let status = res.status();
+            let err = res.text().await?;
+            anyhow::bail!("Failed to list cached contents ({}): {}", status, err);
+        }
+    }
+
+    async fn generate_content_with_cache(
+        &self,
+        request: GenerateContentWithCacheRequest,
+    ) -> Result<GenerateContentResponse> {
+        loop {
+            match self.generate_content_with_cache_single(&request).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    if let Some(quota_err) = e.downcast_ref::<QuotaError>() {
+                        let sleep_duration = quota_err.0;
+                        tracing::warn!(
+                            "Gemini API quota exceeded (cache). Retrying in {:.2}s...",
+                            sleep_duration.as_secs_f64()
+                        );
+                        sleep(sleep_duration).await;
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
 }
 
 pub struct StdioGeminiClient;
@@ -218,18 +370,44 @@ impl GenAiClient for StdioGeminiClient {
         &self,
         request: GenerateContentRequest,
     ) -> Result<GenerateContentResponse> {
+        // ... (existing implementation)
         let msg = json!({
             "type": "ai_request",
             "payload": request
         });
+        self.exec_stdio(msg).await
+    }
 
+    async fn create_cached_content(
+        &self,
+        _request: CreateCachedContentRequest,
+    ) -> Result<CachedContent> {
+        anyhow::bail!("StdioGeminiClient does not support caching yet")
+    }
+
+    async fn list_cached_contents(&self) -> Result<Vec<CachedContent>> {
+        Ok(vec![])
+    }
+
+    async fn generate_content_with_cache(
+        &self,
+        request: GenerateContentWithCacheRequest,
+    ) -> Result<GenerateContentResponse> {
+        let msg = json!({
+            "type": "ai_request_with_cache",
+            "payload": request
+        });
+        self.exec_stdio(msg).await
+    }
+}
+
+impl StdioGeminiClient {
+    async fn exec_stdio(&self, msg: Value) -> Result<GenerateContentResponse> {
         tokio::task::spawn_blocking(move || -> Result<GenerateContentResponse> {
             println!("{}", serde_json::to_string(&msg)?);
-            // Ensure line is written
             use std::io::Write;
             std::io::stdout().flush()?;
 
-            // Read response
             let stdin = std::io::stdin();
             let mut line = String::new();
             if stdin.read_line(&mut line)? == 0 {
