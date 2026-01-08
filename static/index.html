@@ -324,6 +324,20 @@
             line-height: 1.4;
         }
 
+        .log-inline-block {
+            background: var(--code-bg);
+            color: var(--text);
+            padding: 8px;
+            white-space: pre-wrap;
+            font-family: inherit;
+            max-height: 4000px;
+            overflow-y: auto;
+            border: 1px solid var(--code-border);
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
         /* Diff highlighting */
         .diff-line {
             display: block;
@@ -1075,7 +1089,7 @@
                     <div style="margin-top:8px;">
                         <button class="toggle-btn" onclick="toggleCollapsible('inline-${uniqueId}', this)">${icon} Inline Review</button>
                         <div id="inline-${uniqueId}" class="collapsible ${isOpen}">
-                            <div class="log-block">${escapeHtml(r.inline_review, true)}</div>
+                            <div class="log-inline-block">${escapeHtml(r.inline_review, true)}</div>
                         </div>
                     </div>
                 `;
