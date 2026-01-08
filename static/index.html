@@ -825,17 +825,29 @@
 
             items.forEach((p, idx) => {
                 const row = document.createElement('tr');
-                const date = formatDate(p.date);
+                const d = new Date(p.date * 1000);
+                const dateStr = d.toISOString().split('T')[0];
+                const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+                const dateHtml = `
+                    <div>${dateStr}</div>
+                    <div style="color:#666; font-size:0.85em;">${timeStr}</div>
+                `;
 
                 // Parse author
                 let authorName = p.author || 'unknown';
+                let authorEmail = '';
                 const emailMatch = authorName.match(/^(.*?)\s*<(.+)>$/);
                 if (emailMatch) {
                     authorName = emailMatch[1].trim();
+                    authorEmail = emailMatch[2].trim();
+                } else if (authorName.includes('@')) {
+                    authorEmail = authorName;
                 }
 
                 const authorHtml = `
                     <div>${escapeHtml(authorName)}</div>
+                    <div style="color:#666; font-size:0.85em;">${escapeHtml(authorEmail)}</div>
                 `;
 
                 if (state.listMode === 'patchsets') {
@@ -860,7 +872,7 @@
                     row.innerHTML = `
                         <td><div>${escapeHtml(p.subject) || '(no subject)'}</div>${tagsHtml}</td>
                         <td style="line-height:1.2;">${authorHtml}</td>
-                        <td>${date}</td>
+                        <td style="line-height:1.2;">${dateHtml}</td>
                         <td>${parts}</td>
                         <td><span class="status-badge status-${p.status}">${p.status || 'Pending'}</span></td>
                         <td style="${regStyle}">${regText}</td>
@@ -874,7 +886,7 @@
                     row.innerHTML = `
                         <td>${escapeHtml(p.subject) || '(no subject)'}</td>
                         <td style="line-height:1.2;">${authorHtml}</td>
-                        <td>${date}</td>
+                        <td style="line-height:1.2;">${dateHtml}</td>
                         <td><button class="copy-btn" onclick="event.stopPropagation(); copyToClipboard('${escapeHtml(p.message_id)}')">📋</button></td>
                     `;
                 }
