@@ -24,6 +24,10 @@ struct Cli {
     #[arg(long)]
     no_ai: bool,
 
+    /// Port to listen on (overrides settings)
+    #[arg(long)]
+    port: Option<u16>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -62,6 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.no_ai {
         settings.ai.no_ai = true;
         info!("AI interactions disabled via --no-ai flag");
+    }
+
+    if let Some(port) = cli.port {
+        settings.server.port = port;
+        info!("Server port overridden via --port flag: {}", port);
     }
 
     // Initialize Database
@@ -490,6 +499,17 @@ mod tests {
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);
         assert!(!cli.no_ai);
+    }
+
+    #[test]
+    fn test_cli_port() {
+        let args = vec!["sashiko", "--port", "8080"];
+        let cli = Cli::parse_from(args);
+        assert_eq!(cli.port, Some(8080));
+
+        let args = vec!["sashiko"];
+        let cli = Cli::parse_from(args);
+        assert_eq!(cli.port, None);
     }
 
     #[test]
