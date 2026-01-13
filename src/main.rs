@@ -28,13 +28,17 @@ struct Cli {
     #[arg(long)]
     port: Option<u16>,
 
-    /// Ingest a specific message by Message-ID
+    /// Ingest specific messages by Message-ID
     #[arg(long)]
-    message: Option<String>,
+    message: Option<Vec<String>>,
 
-    /// Ingest a specific patchset (series) by the Message-ID of the first message
+    /// Ingest specific patchsets (series) by the Message-ID of the first message
     #[arg(long)]
-    patchset: Option<String>,
+    patchset: Option<Vec<String>>,
+
+    /// Run ingestion only, skipping the reviewer service
+    #[arg(long)]
+    ingest_only: bool,
 
     /// Git baseline for the specific patch or patchset (e.g. commit hash)
     /// Only valid with --message or --patchset
@@ -132,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parser Dispatcher
     let semaphore = Arc::new(Semaphore::new(50));
-    tokio::spawn(async move {
+    let parser_handle = tokio::spawn(async move {
         info!("Parser Dispatcher started");
         while let Some(event) = raw_rx.recv().await {
             let permit = match semaphore.clone().acquire_owned().await {
@@ -192,11 +196,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         }
+        info!("Parser Dispatcher finished");
     });
 
     // DB Worker (Transactional Batching)
     let worker_db = db.clone();
-    tokio::spawn(async move {
+    let db_worker_handle = tokio::spawn(async move {
         info!("DB Worker started");
 
         let mut buffer = Vec::with_capacity(100);
@@ -248,6 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Ingestor (feeds raw_tx)
+    let is_batch_mode = cli.message.is_some() || cli.patchset.is_some();
     let ingestor = Ingestor::new(
         settings.clone(),
         db.clone(),
@@ -258,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.patchset,
         cli.baseline,
     );
-    tokio::spawn(async move {
+    let ingestor_handle = tokio::spawn(async move {
         if let Err(e) = ingestor.run().await {
             error!("Ingestor fatal error: {}", e);
         }
@@ -274,14 +280,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Reviewer Service
-    let reviewer = Reviewer::new(db.clone(), settings.clone());
-    tokio::spawn(async move {
-        reviewer.start().await;
-    });
+    if !cli.ingest_only {
+        let reviewer = Reviewer::new(db.clone(), settings.clone());
+        tokio::spawn(async move {
+            reviewer.start().await;
+        });
+    } else {
+        info!("Ingestion only mode enabled - Reviewer service skipped");
+    }
 
-    // Keep the main thread running
-    tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    if is_batch_mode {
+        info!("Batch mode detected, waiting for completion...");
+        if let Err(e) = ingestor_handle.await {
+            error!("Ingestor task panicked: {}", e);
+        }
+        if let Err(e) = parser_handle.await {
+            error!("Parser task panicked: {}", e);
+        }
+        if let Err(e) = db_worker_handle.await {
+            error!("DB Worker task panicked: {}", e);
+        }
+        info!("Batch processing complete. Exiting.");
+    } else {
+        // Keep the main thread running
+        tokio::signal::ctrl_c().await?;
+        info!("Shutting down...");
+    }
 
     Ok(())
 }
@@ -578,8 +602,12 @@ mod tests {
     fn test_cli_message_patchset() {
         let args = vec!["sashiko", "--message", "123", "--patchset", "456"];
         let cli = Cli::parse_from(args);
-        assert_eq!(cli.message, Some("123".to_string()));
-        assert_eq!(cli.patchset, Some("456".to_string()));
+        assert_eq!(cli.message, Some(vec!["123".to_string()]));
+        assert_eq!(cli.patchset, Some(vec!["456".to_string()]));
+
+        let args = vec!["sashiko", "--message", "1", "--message", "2"];
+        let cli = Cli::parse_from(args);
+        assert_eq!(cli.message, Some(vec!["1".to_string(), "2".to_string()]));
 
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);

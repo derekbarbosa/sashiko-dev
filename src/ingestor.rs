@@ -18,8 +18,8 @@ pub struct Ingestor {
     sender: Sender<Event>,
     download: Option<usize>,
     nntp_enabled: bool,
-    message_id: Option<String>,
-    patchset_id: Option<String>,
+    message_ids: Option<Vec<String>>,
+    patchset_ids: Option<Vec<String>>,
     baseline: Option<String>,
 }
 
@@ -31,8 +31,8 @@ impl Ingestor {
         sender: Sender<Event>,
         download: Option<usize>,
         nntp_enabled: bool,
-        message_id: Option<String>,
-        patchset_id: Option<String>,
+        message_ids: Option<Vec<String>>,
+        patchset_ids: Option<Vec<String>>,
         baseline: Option<String>,
     ) -> Self {
         Self {
@@ -41,26 +41,36 @@ impl Ingestor {
             sender,
             download,
             nntp_enabled,
-            message_id,
-            patchset_id,
+            message_ids,
+            patchset_ids,
             baseline,
         }
     }
 
     pub async fn run(&self) -> Result<()> {
-        if let Some(msg_id) = &self.message_id {
-            info!("Ingesting specific message: {}", msg_id);
-            if let Err(e) = self.ingest_message_by_id(msg_id).await {
-                error!("Failed to ingest message {}: {}", msg_id, e);
+        let mut work_done = false;
+
+        if let Some(msg_ids) = &self.message_ids {
+            for msg_id in msg_ids {
+                info!("Ingesting specific message: {}", msg_id);
+                if let Err(e) = self.ingest_message_by_id(msg_id).await {
+                    error!("Failed to ingest message {}: {}", msg_id, e);
+                }
             }
-            return Ok(());
+            work_done = true;
         }
 
-        if let Some(patchset_id) = &self.patchset_id {
-            info!("Ingesting specific patchset: {}", patchset_id);
-            if let Err(e) = self.ingest_patchset_by_id(patchset_id).await {
-                error!("Failed to ingest patchset {}: {}", patchset_id, e);
+        if let Some(patchset_ids) = &self.patchset_ids {
+            for patchset_id in patchset_ids {
+                info!("Ingesting specific patchset: {}", patchset_id);
+                if let Err(e) = self.ingest_patchset_by_id(patchset_id).await {
+                    error!("Failed to ingest patchset {}: {}", patchset_id, e);
+                }
             }
+            work_done = true;
+        }
+
+        if work_done {
             return Ok(());
         }
 
