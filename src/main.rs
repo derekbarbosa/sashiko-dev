@@ -32,16 +32,16 @@ struct Cli {
     #[arg(long)]
     message: Option<Vec<String>>,
 
-    /// Ingest specific patchsets (series) by the Message-ID of the first message
-    #[arg(long)]
-    patchset: Option<Vec<String>>,
+    /// Ingest specific threads by the Message-ID of the first message
+    #[arg(long, value_name = "MSG_ID")]
+    thread: Option<Vec<String>>,
 
     /// Run ingestion only, skipping the reviewer service
     #[arg(long)]
     ingest_only: bool,
 
     /// Git baseline for the specific patch or patchset (e.g. commit hash)
-    /// Only valid with --message or --patchset
+    /// Only valid with --message or --thread
     #[arg(long)]
     baseline: Option<String>,
 
@@ -109,8 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("AI interactions disabled via --no-ai flag");
     }
 
-    if cli.baseline.is_some() && cli.message.is_none() && cli.patchset.is_none() {
-        error!("--baseline can only be used with --message or --patchset");
+    if cli.baseline.is_some() && cli.message.is_none() && cli.thread.is_none() {
+        error!("--baseline can only be used with --message or --thread");
         return Err("Invalid argument combination".into());
     }
 
@@ -253,7 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Start Ingestor (feeds raw_tx)
-    let is_batch_mode = cli.message.is_some() || cli.patchset.is_some();
+    let is_batch_mode = cli.message.is_some() || cli.thread.is_some();
     let ingestor = Ingestor::new(
         settings.clone(),
         db.clone(),
@@ -261,7 +261,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.download,
         cli.nntp,
         cli.message,
-        cli.patchset,
+        cli.thread,
         cli.baseline,
     );
     let ingestor_handle = tokio::spawn(async move {
@@ -599,11 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_message_patchset() {
-        let args = vec!["sashiko", "--message", "123", "--patchset", "456"];
+    fn test_cli_message_thread() {
+        let args = vec!["sashiko", "--message", "123", "--thread", "456"];
         let cli = Cli::parse_from(args);
         assert_eq!(cli.message, Some(vec!["123".to_string()]));
-        assert_eq!(cli.patchset, Some(vec!["456".to_string()]));
+        assert_eq!(cli.thread, Some(vec!["456".to_string()]));
 
         let args = vec!["sashiko", "--message", "1", "--message", "2"];
         let cli = Cli::parse_from(args);
@@ -612,7 +612,7 @@ mod tests {
         let args = vec!["sashiko"];
         let cli = Cli::parse_from(args);
         assert_eq!(cli.message, None);
-        assert_eq!(cli.patchset, None);
+        assert_eq!(cli.thread, None);
     }
 
     #[test]

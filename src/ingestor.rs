@@ -19,7 +19,7 @@ pub struct Ingestor {
     download: Option<usize>,
     nntp_enabled: bool,
     message_ids: Option<Vec<String>>,
-    patchset_ids: Option<Vec<String>>,
+    thread_ids: Option<Vec<String>>,
     baseline: Option<String>,
 }
 
@@ -32,7 +32,7 @@ impl Ingestor {
         download: Option<usize>,
         nntp_enabled: bool,
         message_ids: Option<Vec<String>>,
-        patchset_ids: Option<Vec<String>>,
+        thread_ids: Option<Vec<String>>,
         baseline: Option<String>,
     ) -> Self {
         Self {
@@ -42,7 +42,7 @@ impl Ingestor {
             download,
             nntp_enabled,
             message_ids,
-            patchset_ids,
+            thread_ids,
             baseline,
         }
     }
@@ -108,11 +108,11 @@ impl Ingestor {
             work_done = true;
         }
 
-        if let Some(patchset_ids) = &self.patchset_ids {
-            for patchset_id in patchset_ids {
-                info!("Ingesting specific patchset: {}", patchset_id);
-                if let Err(e) = self.ingest_patchset_by_id(patchset_id).await {
-                    error!("Failed to ingest patchset {}: {}", patchset_id, e);
+        if let Some(thread_ids) = &self.thread_ids {
+            for thread_id in thread_ids {
+                info!("Ingesting specific thread: {}", thread_id);
+                if let Err(e) = self.ingest_thread_by_id(thread_id).await {
+                    error!("Failed to ingest thread {}: {}", thread_id, e);
                 }
             }
             work_done = true;
@@ -180,9 +180,9 @@ impl Ingestor {
         Ok(())
     }
 
-    async fn ingest_patchset_by_id(&self, msg_id: &str) -> Result<()> {
+    async fn ingest_thread_by_id(&self, msg_id: &str) -> Result<()> {
         let url = format!("https://lore.kernel.org/all/{}/t.mbox.gz", msg_id);
-        info!("Fetching patchset mbox from {}", url);
+        info!("Fetching thread mbox from {}", url);
 
         // curl ... | gunzip
         let mut curl_cmd = Command::new("bash");
@@ -242,7 +242,7 @@ impl Ingestor {
         }
 
         info!(
-            "Successfully ingested {} messages from patchset {}",
+            "Successfully ingested {} messages from thread {}",
             count, msg_id
         );
         Ok(())

@@ -27,7 +27,7 @@ echo "Found ${#MSG_IDS[@]} message IDs in $(basename "$STAT_FILE")."
 # Construct arguments
 CMD_ARGS=("--ingest-only")
 for id in "${MSG_IDS[@]}"; do
-    CMD_ARGS+=("--message" "$id")
+    CMD_ARGS+=("--thread" "$id")
 done
 
 # Run sashiko
