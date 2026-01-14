@@ -499,8 +499,8 @@ pub async fn get_range_base(repo_path: &Path, rev_range: &str) -> Result<String>
              "HEAD".to_string()
         }
     } else {
-        // Single commit: use parent
-        format!("{}^", rev_range)
+        // Single commit: treated as <since>..HEAD by format-patch, so base is the commit itself
+        rev_range.to_string()
     };
 
     get_commit_hash(repo_path, &base_rev).await
@@ -621,6 +621,13 @@ mod tests {
             .await?;
         let c1 = get_commit_hash(&repo_path, "HEAD").await?;
 
+        // Tag v1
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["tag", "v1"])
+            .output()
+            .await?;
+
         // C2
         Command::new("git")
             .current_dir(&repo_path)
@@ -628,6 +635,13 @@ mod tests {
             .output()
             .await?;
         let c2 = get_commit_hash(&repo_path, "HEAD").await?;
+
+        // Branch feature
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "feature"])
+            .output()
+            .await?;
 
         // C3
         Command::new("git")
@@ -645,13 +659,21 @@ mod tests {
         let base = get_range_base(&repo_path, "HEAD~1..HEAD").await?;
         assert_eq!(base, c2);
 
-        // Test single commit C3 -> C2
+        // Test single commit C3 (as range start) -> C3
         let base = get_range_base(&repo_path, &c3).await?;
-        assert_eq!(base, c2);
+        assert_eq!(base, c3);
 
         // Test merge base (simple linear) C1...C3 -> C1
         let base = get_range_base(&repo_path, "HEAD~2...HEAD").await?;
         assert_eq!(base, c1);
+
+        // Test with Tag: v1..HEAD (v1 is C1) -> C1
+        let base = get_range_base(&repo_path, "v1..HEAD").await?;
+        assert_eq!(base, c1);
+
+        // Test with Branch: feature (is C2) -> C2 (as range start)
+        let base = get_range_base(&repo_path, "feature").await?;
+        assert_eq!(base, c2);
 
         Ok(())
     }
