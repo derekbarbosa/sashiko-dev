@@ -27,7 +27,12 @@ pub struct DatabaseSettings {
 pub struct NntpSettings {
     pub server: String,
     pub port: u16,
-    pub groups: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct MailingListsSettings {
+    pub track: Vec<String>,
 }
 
 fn default_max_input_tokens() -> usize {
@@ -102,6 +107,7 @@ pub struct Settings {
     pub log_level: String,
     pub database: DatabaseSettings,
     pub nntp: NntpSettings,
+    pub mailing_lists: MailingListsSettings,
     pub ai: AiSettings,
     pub server: ServerSettings,
     pub git: GitSettings,

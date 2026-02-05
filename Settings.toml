@@ -4,10 +4,12 @@ log_level = "info"
 url = "sashiko.db"
 token = ""
 
+[mailing_lists]
+track = ["linux-kernel", "linux-mm"]
+
 [nntp]
 server = "nntp.lore.kernel.org"
 port = 119
-groups = ["org.kernel.vger.linux-kernel"]
 
 [ai]
 provider = "gemini"
