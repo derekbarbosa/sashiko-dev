@@ -1603,7 +1603,7 @@
                             <span>${displayResult}</span>
                             <span class="status-badge status-${statusRaw.split(' ')[0]}">${statusRaw}</span>
                         </div>
-                        <div class="review-meta-label">Tokens:</div><div>${tokenStr}</div>
+                        <div class="review-meta-label">Tokens used:</div><div>${tokenStr}</div>
                         ` : `
                         <div class="review-meta-label">Status:</div>
                         <div><span class="status-badge status-${statusRaw.split(' ')[0]}">${statusRaw}</span></div>
@@ -1611,9 +1611,9 @@
                     </div>
                     ${showDetails ? `
                     ${inlineHtml}
-                    <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <div style="margin-top:8px; display:flex; justify-content:space-between; align-items:center; font-size: 0.9em;">
                         ${r.id ? `<a href="#/log/${r.id}" style="font-weight:600; color:#666; text-decoration:none;" onmouseover="this.style.color='#007bff'" onmouseout="this.style.color='#666'">View Raw Log</a>` : '<span></span>'}
-                        <a href="javascript:void(0)" onclick="document.getElementById('ai-reviews').scrollIntoView({behavior: 'smooth'})" style="font-size: 0.85em; color: #999; text-decoration: none;">↑ Back to Summary</a>
+                        <a href="javascript:void(0)" onclick="document.getElementById('ai-reviews').scrollIntoView({behavior: 'smooth'})" style="font-size: 0.95em; color: #999; text-decoration: none;">↑ Back to Summary</a>
                     </div>
                     ` : ''}
                 </div>
