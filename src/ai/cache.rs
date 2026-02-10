@@ -222,7 +222,7 @@ mod tests {
         let manager = CacheManager::new(
             base_dir,
             Box::new(mock_client),
-            "gemini-1.5-flash-002".to_string(),
+            "test-model".to_string(),
             "60s".to_string(),
             None,
         );
@@ -237,7 +237,7 @@ mod tests {
             .expect("create_cached_content not called");
         assert_eq!(request.ttl, Some("60s".to_string()));
         // Also verify model name is prefixed
-        assert_eq!(request.model, "models/gemini-1.5-flash-002");
+        assert_eq!(request.model, "models/test-model");
     }
 
     struct MockGenAiClientWithExisting {

@@ -3664,7 +3664,7 @@ mod tests {
 
         // 2. Add dependencies to ps1 (Review, Tag, Subsystem)
         let review_id = db
-            .create_review(ps1, None, "gemini", "gemini-1.5-pro", None, None)
+            .create_review(ps1, None, "gemini", "test-model", None, None)
             .await
             .unwrap();
 
@@ -3821,7 +3821,7 @@ mod tests {
                 ps_id,
                 Some(patch_id),
                 "gemini",
-                "gemini-1.5-pro",
+                "test-model",
                 None,
                 None,
             )

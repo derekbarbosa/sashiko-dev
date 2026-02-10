@@ -10,7 +10,7 @@ A standalone CLI tool that interfaces with the existing `sashiko` database and t
 
 **Arguments:**
 - `--patchset <ID>`: Database ID of the patchset to review.
-- `--model <NAME>`: Defaults to `gemini-1.5-pro-latest` (or `gemini-3-pro` if available).
+- `--model <NAME>`: Defaults to the model configured in `Settings.toml`.
 - `--dry-run`: Output review to stdout instead of saving to DB.
 
 ### 2. Core Components
