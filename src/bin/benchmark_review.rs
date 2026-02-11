@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use futures::stream::StreamExt;
+use regex::Regex;
 use sashiko::ai::gemini::{Content, GeminiClient, GenAiClient, GenerateContentRequest, Part};
 use sashiko::db::Database;
 use sashiko::settings::Settings;
@@ -302,17 +303,19 @@ async fn process_entry(
                 })
                 .unwrap_or_else(|| "Unknown".to_string());
 
-            let parts: Vec<&str> = text.splitn(2, '\n').collect();
-            let status_raw = parts[0]
-                .trim()
-                .replace("[", "")
-                .replace("]", "")
-                .replace("**", "");
-            let expl = if parts.len() > 1 {
-                parts[1].trim().to_string()
+            let re_status = Regex::new(r"(?i)\b(DETECTED|PARTIALLY_DETECTED|MISSED)\b").unwrap();
+            let (status_raw, expl_raw) = if let Some(cap) = re_status.captures(&text) {
+                let s = cap[1].to_uppercase();
+                let remaining = re_status.replace(&text, "").to_string();
+                (s, remaining)
             } else {
-                "".to_string()
+                ("UNKNOWN".to_string(), text.clone())
             };
+
+            let expl = expl_raw
+                .trim()
+                .trim_start_matches(|c| c == ':' || c == '-' || c == ' ' || c == '\n')
+                .to_string();
             (status_raw, expl)
         }
         Err(e) => {
