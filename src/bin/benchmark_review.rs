@@ -214,7 +214,7 @@ async fn process_entry(
     let findings_result = db
         .conn
         .query(
-            "SELECT message, suggestion, severity FROM findings WHERE review_id = ?",
+            "SELECT problem, suggestion, severity, severity_explanation FROM findings WHERE review_id = ?",
             libsql::params![review_id],
         )
         .await;
@@ -227,8 +227,12 @@ async fn process_entry(
             let msg: String = row.get(0).unwrap_or_default();
             let suggestion: Option<String> = row.get(1).ok();
             let severity: i32 = row.get(2).unwrap_or(0);
+            let explanation: Option<String> = row.get(3).ok();
 
             findings_text.push_str(&format!("- [Severity {}] {}\n", severity, msg));
+            if let Some(e) = explanation {
+                findings_text.push_str(&format!("  Explanation: {}\n", e));
+            }
             if let Some(s) = suggestion {
                 findings_text.push_str(&format!("  Suggestion: {}\n", s));
             }

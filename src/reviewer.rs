@@ -496,7 +496,7 @@ impl Reviewer {
 
                 // Try git am
                 let mut applied = false;
-                if let Ok(_) = worktree.apply_patch(&mbox).await {
+                if (worktree.apply_patch(&mbox).await).is_ok() {
                     applied = true;
                 } else {
                     // Fallback raw diff
@@ -810,25 +810,24 @@ impl Reviewer {
                                     review_content.get("findings").and_then(|f| f.as_array())
                                 {
                                     for f in findings_arr {
-                                        let file_path =
-                                            f["file"].as_str().unwrap_or("unknown").to_string();
-                                        let line_number = f["line"].as_i64().unwrap_or(0);
                                         let severity_str = f["severity"].as_str().unwrap_or("Low");
-                                        let message =
-                                            f["message"].as_str().unwrap_or("").to_string();
+                                        let severity = Severity::from_str(severity_str);
+
+                                        let problem =
+                                            f["problem"].as_str().unwrap_or("").to_string();
+                                        let severity_explanation = f["severity_explanation"]
+                                            .as_str()
+                                            .map(|s| s.to_string());
                                         let suggestion =
                                             f["suggestion"].as_str().map(|s| s.to_string());
-
-                                        let severity = Severity::from_str(severity_str);
 
                                         let _ = ctx
                                             .db
                                             .create_finding(Finding {
                                                 review_id,
-                                                file_path,
-                                                line_number,
                                                 severity,
-                                                message,
+                                                severity_explanation,
+                                                problem,
                                                 suggestion,
                                             })
                                             .await;

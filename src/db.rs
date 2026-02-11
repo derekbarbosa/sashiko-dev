@@ -122,10 +122,9 @@ impl Severity {
 
 pub struct Finding {
     pub review_id: i64,
-    pub file_path: String,
-    pub line_number: i64,
     pub severity: Severity,
-    pub message: String,
+    pub severity_explanation: Option<String>,
+    pub problem: String,
     pub suggestion: Option<String>,
 }
 
@@ -413,6 +412,24 @@ impl Database {
                  WHERE m.mailing_list IS NOT NULL",
                 (),
             )
+            .await;
+
+        // Findings table migration
+        let _ = self
+            .try_add_column("findings", "severity_explanation", "TEXT")
+            .await;
+        // Ignore errors for these as they might fail on new DBs or if already migrated
+        let _ = self
+            .conn
+            .execute("ALTER TABLE findings RENAME COLUMN message TO problem", ())
+            .await;
+        let _ = self
+            .conn
+            .execute("ALTER TABLE findings DROP COLUMN file_path", ())
+            .await;
+        let _ = self
+            .conn
+            .execute("ALTER TABLE findings DROP COLUMN line_number", ())
             .await;
 
         let _ = self.migrate_tool_usages().await;
@@ -703,14 +720,13 @@ impl Database {
 
     pub async fn create_finding(&self, finding: Finding) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO findings (review_id, file_path, line_number, severity, message, suggestion)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO findings (review_id, severity, severity_explanation, problem, suggestion)
+             VALUES (?, ?, ?, ?, ?)",
             libsql::params![
                 finding.review_id,
-                finding.file_path,
-                finding.line_number,
                 finding.severity as i32,
-                finding.message,
+                finding.severity_explanation,
+                finding.problem,
                 finding.suggestion,
             ],
         ).await?;
@@ -752,10 +768,20 @@ impl Database {
             if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&output_raw) {
                 if let Some(findings_arr) = json_val.get("findings").and_then(|f| f.as_array()) {
                     for f in findings_arr {
-                        let file_path = f["file"].as_str().unwrap_or("unknown").to_string();
-                        let line_number = f["line"].as_i64().unwrap_or(0);
                         let severity_str = f["severity"].as_str().unwrap_or("Low");
-                        let message = f["message"].as_str().unwrap_or("").to_string();
+
+                        // New format: problem, severity_explanation
+                        // Old format: message
+                        let problem = if let Some(p) = f.get("problem").and_then(|s| s.as_str()) {
+                            p.to_string()
+                        } else {
+                            f["message"].as_str().unwrap_or("").to_string()
+                        };
+
+                        let severity_explanation = f
+                            .get("severity_explanation")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.to_string());
                         let suggestion = f["suggestion"].as_str().map(|s| s.to_string());
 
                         let severity = Severity::from_str(severity_str);
@@ -763,10 +789,9 @@ impl Database {
                         let _ = self
                             .create_finding(Finding {
                                 review_id,
-                                file_path,
-                                line_number,
                                 severity,
-                                message,
+                                severity_explanation,
+                                problem,
                                 suggestion,
                             })
                             .await;

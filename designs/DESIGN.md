@@ -91,7 +91,7 @@ The data model is built around five core entities: **Messages**, **Threads**, **
     *   `diff`: The extracted diff content.
 *   **`baselines`**: `id`, `repo_url`, `branch`, `last_known_commit`.
 *   **`reviews`**: `id`, `patchset_id`, `model_name`, `summary`, `created_at`.
-*   **`comments`**: `id`, `review_id`, `file_path`, `line_number`, `content`, `severity` (Info, Warning, Error).
+*   **`findings`**: `id`, `review_id`, `severity` (Info, Warning, Error), `problem`, `severity_explanation`.
 *   **`ai_interactions`**:
     *   `id` (UUID): Unique identifier for the interaction.
     *   `parent_interaction_id` (UUID, nullable): For chaining operations (e.g., refinement steps).

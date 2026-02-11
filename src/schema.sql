@@ -117,10 +117,9 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY,
     review_id INTEGER NOT NULL,
-    file_path TEXT,
-    line_number INTEGER,
     severity INTEGER NOT NULL, -- 1: Low, 2: Medium, 3: High, 4: Critical
-    message TEXT,
+    severity_explanation TEXT,
+    problem TEXT,
     suggestion TEXT,
     FOREIGN KEY(review_id) REFERENCES reviews(id)
 );

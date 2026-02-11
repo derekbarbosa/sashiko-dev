@@ -887,7 +887,7 @@ pub fn extract_message_id(raw_bytes: &[u8]) -> String {
     let raw_str = String::from_utf8_lossy(raw_bytes);
     for line in raw_str.lines() {
         if line.to_lowercase().starts_with("message-id:") {
-            let val = line.splitn(2, ':').nth(1).unwrap_or("").trim();
+            let val = line.split_once(':').map(|x| x.1).unwrap_or("").trim();
             // Remove brackets
             let clean = val.trim_start_matches('<').trim_end_matches('>');
             if !clean.is_empty() {

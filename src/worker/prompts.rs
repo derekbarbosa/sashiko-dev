@@ -30,10 +30,9 @@ JSON Output Schema:\n\
   \"verdict\": \"Brief verdict\",\n\
   \"findings\": [\n\
     {\n\
-      \"file\": \"path/to/file\",\n\
-      \"line\": <line_number>,\n\
       \"severity\": \"Critical|High|Medium|Low\",\n\
-      \"message\": \"Description of the finding\",\n\
+      \"severity_explanation\": \"Why this severity was chosen\",\n\
+      \"problem\": \"Description of the finding\",\n\
       \"suggestion\": \"Optional code suggestion\"\n\
     }\n\
   ]\n\
