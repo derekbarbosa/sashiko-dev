@@ -119,7 +119,7 @@ impl PromptRegistry {
         let mut paths = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "md") {
+            if path.extension().is_some_and(|ext| ext == "md") {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     if filter(name) {
                         paths.push(path);
