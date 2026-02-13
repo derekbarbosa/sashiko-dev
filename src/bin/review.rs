@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
                             .await;
 
                             if !success {
-                                // exquisite failure: worked first time, failed second?
+                                // Inconsistent state: patch applied successfully on first pass but failed on second.
                                 error!("Patch {} failed to apply on second pass!", p.index);
                                 let result_json = json!({
                                     "patchset_id": patchset_id,

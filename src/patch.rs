@@ -241,7 +241,7 @@ pub fn get_subject_prefixes(subject: &str) -> Vec<String> {
 
     for cap in re.captures_iter(subject) {
         if let Some(content) = cap.get(1) {
-            // Split by whitespace/non-word chars?
+            // Split by whitespace or non-word characters.
             // "PATCH net-next 1/2" -> "PATCH", "net-next", "1/2"
             // "PATCH,net-next,1/2" -> "PATCH", "net-next", "1/2"
             let tokens: Vec<&str> = content

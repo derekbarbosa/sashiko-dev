@@ -109,7 +109,7 @@ async fn inspect_missed_patches(db: &Database) -> Result<()> {
                 let subject_lower = subject.to_lowercase();
                 let has_patch_tag = subject_lower.contains("patch");
 
-                // Heuristic: If it has [PATCH] and NO diff, it might be a cover letter that was missed?
+                // Heuristic: If it has [PATCH] and NO diff, it might be a missed cover letter.
                 // Or if it has diff but no [PATCH] (rare in LKML but possible).
 
                 if has_diff {
@@ -181,7 +181,7 @@ async fn inspect_patchsets(db: &Database) -> Result<()> {
 
         if status == "Incomplete" && (now - date) > 86400 * 2 {
             // Older than 2 days and still incomplete
-            // Only warn if received > 0, otherwise it might be a ghost or just created?
+            // Only warn if received > 0, otherwise it might be a ghost or just created.
             // Actually, if received < total, it's stuck.
             // Lots of these might exist if parts were missed.
             if received > 0 {

@@ -33,14 +33,14 @@ pub struct GitWorktree {
 impl GitWorktree {
     #[allow(dead_code)]
     pub fn from_path(path: PathBuf, repo_path: PathBuf) -> Self {
-        // Create a dummy tempdir that won't be deleted or used, just to satisfy the struct
+        // Create a dummy tempdir to satisfy the struct (it won't be deleted or used).
         // Actually, we can't easily construct a TempDir that doesn't delete on drop unless we use into_path() but we need to keep it in struct.
         // Or we make dir: Option<TempDir>.
         // Let's change struct to Option<TempDir>.
         Self {
             dir: tempfile::Builder::new().prefix("dummy").tempdir().unwrap(), // Hack: create a dummy tempdir, but we won't use it.
-            // Wait, if we drop this struct, the dummy tempdir is deleted. That's fine.
-            // We just shouldn't delete the `path`.
+            // If we drop this struct, the dummy tempdir is deleted, which is acceptable.
+            // Do not delete the path.
             path,
             repo_path,
             is_managed: false,
@@ -585,7 +585,7 @@ pub async fn get_range_base(repo_path: &Path, rev_range: &str) -> Result<String>
     } else if rev_range.contains("..") {
         // Range: use start (left side)
         // Handle "A..B" -> A
-        // Handle "..B" -> HEAD? No, usually implies HEAD..B or similar?
+        // Handle "..B" -> HEAD (usually implies HEAD..B).
         // Let's assume standard A..B
         let parts: Vec<&str> = rev_range.split("..").collect();
         if !parts[0].is_empty() {

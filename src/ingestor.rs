@@ -438,7 +438,7 @@ impl Ingestor {
             // We use &group because ensure_mailing_list expects &str
             if let Err(e) = self.db.ensure_mailing_list(&name, &group).await {
                 error!("Failed to ensure mailing list {} exists: {}", group, e);
-                // Continue anyway, maybe it exists? Or we just fail linking.
+                // Continue anyway; linking may fail if the list doesn't exist.
             }
 
             match self.resolve_git_info(&group).await {

@@ -470,7 +470,6 @@ impl GenAiClient for StdioGeminiClient {
         &self,
         request: GenerateContentRequest,
     ) -> Result<GenerateContentResponse> {
-        // ... (existing implementation)
         let msg = json!({
             "type": "ai_request",
             "payload": request
@@ -538,12 +537,12 @@ impl AiProvider for GeminiClient {
     async fn completion(&self, request: AiRequest) -> Result<AiResponse> {
         // Implementation remains same, assuming AiRequest to GenerateContentRequest mapping
         // For brevity, I'll copy the existing logic or simpler:
-        // Since Agent uses GenAiClient, AiProvider might not be used anymore by review.rs?
+        // Agent uses GenAiClient, so AiProvider might be legacy.
         // review.rs uses Agent.
-        // But reviewer.rs (parent) uses AiProvider for create_review DB logging?
+        // Reviewer.rs uses AiProvider for DB logging.
         // reviewer.rs: `db.create_review(..., &settings.ai.provider, ...)`
         // `reviewer.rs` does NOT call `completion`.
-        // So `AiProvider` is legacy or used elsewhere?
+        // AiProvider is maintained for compatibility.
         // It's used in `src/ai/mod.rs` trait definition.
         // `src/ai/gemini.rs` implemented it.
         // I will keep it implemented for `GeminiClient` to be safe.

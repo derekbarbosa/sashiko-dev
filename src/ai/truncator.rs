@@ -105,8 +105,8 @@ impl Truncator {
         let (start_focus, end_focus) = if let Some(range) = focus_lines {
             (range.start.max(1) - 1, range.end.min(total_lines))
         } else {
-            // If no focus, just take the top part?
-            // Or maybe searching for "main" functions?
+            // If no focus, default to top part.
+            // Future improvement: search for "main" functions.
             // For now, let's default to head/tail strategy if no focus.
             return Self::truncate_diff(content, max_tokens);
         };

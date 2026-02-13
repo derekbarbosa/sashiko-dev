@@ -480,11 +480,11 @@ impl ToolBox {
             let mut output_buffer = Vec::new();
 
             // Standard printer writes to the buffer.
-            // We create a new printer for each file to ensure we can write to the same buffer?
+            // Create a new printer for each file to write to the shared buffer.
             // Actually, `printer` takes a `W`.
 
             let walker = WalkBuilder::new(&search_path)
-                .hidden(false) // Search hidden files? git grep usually doesn't, but grep -r does. default ignore handles .git
+                .hidden(false) // Search hidden files (default ignore handles .git).
                 .ignore(true) // Respect .ignore
                 .git_ignore(true) // Respect .gitignore
                 .build();

@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 error!("Failed to get oldest message timestamp: {}", e);
-                // Fallback to safe default? Or fail?
+                // Fallback to safe default (current time).
                 // Let's assume now to be safe and avoid flooding.
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -423,7 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // info!("Processing batch of {} parsed articles", count); // Too verbose
             if let Err(e) = worker_db.begin_transaction().await {
                 error!("Failed to begin transaction: {}", e);
-                total_errors += count; // Assume all failed if txn fails? Or just log error.
+                total_errors += count; // Assume all failed if the transaction fails.
                 continue;
             }
 

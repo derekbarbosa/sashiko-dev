@@ -30,16 +30,26 @@ pub mod worker;
 use std::fmt;
 use std::str::FromStr;
 
+/// Represents the current status of a patchset review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewStatus {
+    /// The patchset is not yet fully received (e.g., waiting for more parts).
     Incomplete,
+    /// The patchset is complete and waiting for review.
     Pending,
+    /// The patchset is currently being applied to a worktree.
     Applying,
+    /// The patchset is currently under AI review.
     InReview,
+    /// The review process was cancelled.
     Cancelled,
+    /// The review was skipped (e.g., due to configuration or filtering).
     Skipped,
+    /// The review process completed successfully.
     Reviewed,
+    /// The review process failed due to an error.
     Failed,
+    /// The patchset failed to apply to the baseline.
     FailedToApply,
 }
 

@@ -68,6 +68,13 @@ fn generate_id() -> String {
     format!("{:x}-{:x}", since_the_epoch.as_micros(), std::process::id())
 }
 
+/// The `Reviewer` service orchestrates the review process for patchsets.
+///
+/// It manages:
+/// - Baseline resolution and worktree preparation.
+/// - AI-based code review execution.
+/// - Patch application verification.
+/// - Interaction with the database and external tools.
 pub struct Reviewer {
     db: Arc<Database>,
     settings: Settings,
@@ -81,6 +88,12 @@ pub struct Reviewer {
 use crate::worker::tools::ToolBox;
 
 impl Reviewer {
+    /// Creates a new `Reviewer` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - The database connection.
+    /// * `settings` - Application settings.
     pub fn new(db: Arc<Database>, settings: Settings) -> Self {
         let concurrency = settings.review.concurrency;
         let repo_path = PathBuf::from(&settings.git.repository_path);
@@ -127,6 +140,10 @@ impl Reviewer {
         }
     }
 
+    /// Starts the reviewer service loop.
+    ///
+    /// This method runs indefinitely, polling the database for pending patchsets
+    /// and processing them. It handles concurrency limits and worktree cleanup.
     pub async fn start(&self) {
         info!(
             "Starting Reviewer service with concurrency limit: {}",
@@ -557,7 +574,7 @@ impl Reviewer {
                     ctx.db
                         .create_baseline(repo_url, branch, Some(&baseline_sha))
                         .await
-                        .ok() // If fail, we just proceed? Better to have it.
+                        .ok() // If fail, we just proceed. Better to have it.
                 };
 
                 // Serialize attempts to JSON
@@ -577,16 +594,16 @@ impl Reviewer {
                     );
                 } else {
                     // Fallback if DB insert fails, though unlikely
-                    // We still return success but maybe log error?
-                    // We continue loop? No, application succeeded.
-                    // Just return success without ID? But caller needs ID.
+                    // We still return success but maybe log error.
+                    // We do not continue loop as application succeeded.
+                    // Just return success without ID.
                     // This path is tricky. Let's assume ID creation works or we fail this attempt.
                     // If we fail, we clean up.
                     // For now, let's treat it as success but maybe missing ID is fatal for `Some` return.
                     // But `create_baseline` returns Result<i64>.
                     // If it fails, we can't associate baseline.
-                    // Let's count it as failure?
-                    // Re-push attempt with failure?
+                    // Let's count it as failure.
+                    // Re-push attempt with failure.
                     // Actually we already pushed "Applied".
                     // Let's modify the last attempt status if we can't save to DB.
                     if let Some(last) = attempts.last_mut() {
@@ -1236,7 +1253,7 @@ async fn run_review_tool(
                                 }
                             }
                         } else {
-                            // Unknown type? Assume it's result if it matches result structure?
+                            // Unknown type. Assume it's result if it matches result structure.
                             if json_msg.get("patchset_id").is_some() {
                                 final_result = Some(json_msg);
                                 break;
@@ -1250,7 +1267,7 @@ async fn run_review_tool(
                         }
                     }
                 } else {
-                    // Non-JSON line? Log it
+                    // Non-JSON line. Log it.
                     warn!("Review tool stdout: {}", line);
                 }
             }

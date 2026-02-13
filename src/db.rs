@@ -262,15 +262,15 @@ impl Database {
 
             if let (Some(_h), Some(_g)) = (hash, group) {
                 // We don't have easy access to git_ops::read_blob here without repo path.
-                // Assuming db shouldn't know about repo path logic or we pass it?
-                // Reviewer service has repo path.
-                // Let's just return None if body is empty in DB, and let caller handle blob if needed.
-                // But for base-commit, we need the body.
-                // Ideally body is populated in DB if small?
-                // Sashiko stores body in DB unless it's a huge patch?
-                // "body_to_store" in main.rs logic:
+                // The DB does not know about repo path logic; it must be passed in.
+                // The Reviewer service has the repo path.
+                // Return None if the body is empty in the DB, and let the caller handle the blob if needed.
+                // The body is needed for the base-commit.
+                // The body is populated in the DB if it is small.
+                // Sashiko stores the body in the DB unless it is a large patch.
+                // See "body_to_store" logic in main.rs:
                 // `if is_git_hash { ("", Some(hash)) } else { (body, None) }`
-                // So if it's from git archive, body is empty in DB.
+                // If it is from a git archive, the body is empty in the DB.
                 return Ok(None);
             }
             Ok(None)
@@ -683,14 +683,14 @@ impl Database {
                             if let Some(call) = part.get("functionCall") {
                                 let name = call["name"].as_str().unwrap_or("unknown");
                                 let args = call["args"].to_string();
-                                // We need to find the response to get output length.
+                                // We need to find the response to get the output length.
                                 // But here we iterate linearly.
-                                // Let's just estimate or find next part?
-                                // Simplification: just record usage without output length for now?
-                                // Or try to find corresponding functionResponse in next parts/items?
-                                // actually the history interleaves them.
+                                // Estimate or find the next part.
+                                // Record usage without output length for now.
+                                // Attempt to find the corresponding functionResponse in subsequent parts.
+                                // The history interleaves them.
 
-                                // For now, let's insert what we have.
+                                // Insert what we have for now.
                                 let _ = self
                                     .create_tool_usage(ToolUsage {
                                         review_id,
@@ -705,7 +705,7 @@ impl Database {
                             // If we want exact output length, we need to match functionResponse.
                             // But that might be complex for this simple migration.
                             if let Some(_resp) = part.get("functionResponse") {
-                                // We could update the previous entry?
+                                // Update the previous entry.
                                 // Or just ignore output length for backfill.
                             }
                         }
@@ -1092,7 +1092,7 @@ impl Database {
             )
             .await?;
 
-        // If we provided a name and the existing record has no name, update it?
+        // If a name is provided and the existing record has none, update it.
         // For now, keep it simple. Just get ID.
         let mut rows = self
             .conn
@@ -1388,17 +1388,17 @@ impl Database {
             }
         }
 
-        // Use INSERT OR REPLACE to handle updating placeholders
-        // But we want to preserve thread_id if it was set by placeholder (which is correct).
+        // Use INSERT OR REPLACE to handle updating placeholders.
+        // We want to preserve thread_id if it was set by placeholder (which is correct).
         // Actually, if we are "creating" the real message now, we should overwrite the placeholder fields.
-        // But we must ensure we keep the same thread_id if it exists?
-        // No, the caller (main.rs) resolves thread_id before calling create_message.
+        // Ensure the same thread_id is kept if it exists.
+        // The caller (main.rs) resolves thread_id before calling create_message.
         // If we found a placeholder, we use its thread_id.
         // So here we just upsert.
 
-        // However, if we blindly REPLACE, we might change the thread_id if we passed a different one?
+        // Blindly replacing might change the thread_id if a different one is passed.
         // But main.rs logic should ensure consistency.
-        // Let's use INSERT OR REPLACE.
+        // Use INSERT OR REPLACE.
         self.conn.execute(
             "INSERT INTO messages (message_id, thread_id, in_reply_to, author, subject, date, body, to_recipients, cc_recipients, git_blob_hash, mailing_list) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1566,10 +1566,10 @@ impl Database {
             let existing_thread_id: Option<i64> = row.get(8).ok();
 
             // Check if this message is already part of this patchset (Duplicate processing)
-            // 1. Is it the cover letter?
+            // 1. Check if it is the cover letter.
             let is_cover_duplicate = existing_cover_id.as_deref() == Some(message_id);
 
-            // 2. Is it an existing patch?
+            // 2. Check if it is an existing patch.
             let is_patch_duplicate = if !is_cover_duplicate {
                 let mut p_rows = self
                     .conn
@@ -1772,10 +1772,10 @@ impl Database {
                     )
                     .await?;
             } else if matches.len() > 1 {
-                // If we merged, we might need to update the subject index of the target to the best one we found
+                // If we merged, we might need to update the subject index of the target to the best one we found.
                 // But we don't have the subject string from the merged one easily available here.
                 // However, the existing target subject is likely fine unless part_index is better.
-                // We just update subject_index to be correct if we merged a better one?
+                // Update subject_index to be correct if a better one was merged.
                 // Actually, if matches[i].1 was better, we should have used its subject.
                 // But that's complicated. Assuming the target (oldest) usually has the cover letter or we eventually find it.
                 // Simplification: We only update if CURRENT patch is better.
@@ -3065,7 +3065,7 @@ mod tests {
             .unwrap();
         let author = "Author V6 <v6@example.com>";
 
-        // Case: Cover letter has v6, but patches don't say v6 (implicitly v1?)
+        // Case: Cover letter has v6, but patches don't say v6 (implicitly v1).
         // If the user forgot to version patches, they should NOT merge with strict version checking.
         // This prevents merging v1 patches into v6 series if timestamps overlap.
 
@@ -3106,7 +3106,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // 2. Patch 1: [PATCH 01/33] -> v1 (implicit) -> Pass None
+        // 2. Patch 1: [PATCH 01/33] -> v1 (implicit). Pass None.
         db.create_message(
             "msg_01",
             thread_id,
@@ -3553,7 +3553,7 @@ mod tests {
             .unwrap();
         let author = "Confused Author <confused@example.com>";
 
-        // 1. [PATCH v3 00/17] -> v3
+        // 1. [PATCH v3 00/17] (v3)
         db.create_message(
             "msg_v3_conf_00",
             thread_id,
@@ -3590,7 +3590,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // 2. [PATCH 01/17] Support v2 hardware -> Should treat as implicit version (None), NOT v2
+        // 2. [PATCH 01/17] Support v2 hardware. Treat as implicit version (None), NOT v2.
         db.create_message(
             "msg_conf_01",
             thread_id,

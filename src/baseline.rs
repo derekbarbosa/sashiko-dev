@@ -334,7 +334,7 @@ impl BaselineRegistry {
                         return vec![self.resolve_url(url, branch.clone())];
                     }
                     if !is_next && !url.contains("next") {
-                        // Prefer non-next if subject doesn't say next?
+                        // Prefer non-next trees if the subject does not explicitly mention 'next'.
                     }
                 }
             }
