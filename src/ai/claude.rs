@@ -21,7 +21,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
-use tracing::error;
+use tracing::{error, info, warn};
 
 // --- Claude API Request/Response Types ---
 
@@ -193,12 +193,30 @@ impl ClaudeClient {
         let status = res.status();
 
         if status.is_success() {
-            let response: ClaudeResponse = res
-                .json()
-                .await
-                .context("Failed to parse Claude API response")?;
+            let body_text = res.text().await?;
+            let response: ClaudeResponse =
+                serde_json::from_str(&body_text).context("Failed to parse Claude API response")?;
+
+            info!(
+                "Claude response received. Tokens: in={}, out={}, cached={}",
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                response.usage.cache_read_input_tokens.unwrap_or(0)
+            );
+
             Ok(response)
         } else {
+            // Parse retry-after header for 429 responses
+            let retry_after_duration = if status.as_u16() == 429 {
+                res.headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(Duration::from_secs)
+            } else {
+                None
+            };
+
             let error_body = res
                 .text()
                 .await
@@ -206,8 +224,8 @@ impl ClaudeClient {
 
             match status.as_u16() {
                 429 => {
-                    // Rate limit - extract retry-after if present
-                    let duration = Duration::from_secs(60); // Default to 60s
+                    // Rate limit - use parsed retry-after or default to 60s
+                    let duration = retry_after_duration.unwrap_or(Duration::from_secs(60));
                     Err(ClaudeError::RateLimitExceeded(duration))?
                 }
                 529 => {
@@ -218,6 +236,42 @@ impl ClaudeClient {
                 400 => Err(ClaudeError::InvalidRequest(error_body))?,
                 401 | 403 => Err(ClaudeError::AuthenticationError(error_body))?,
                 _ => Err(ClaudeError::ApiError(status, error_body))?,
+            }
+        }
+    }
+
+    async fn post_request_with_retry(&self, body: &ClaudeRequest) -> Result<ClaudeResponse> {
+        let mut attempt = 0;
+        loop {
+            match self.post_request(body).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    if let Some(err) = e.downcast_ref::<ClaudeError>() {
+                        match err {
+                            ClaudeError::RateLimitExceeded(duration) => {
+                                warn!("Rate limited, waiting {:?}", duration);
+                                tokio::time::sleep(*duration).await;
+                                continue;
+                            }
+                            ClaudeError::OverloadedError(base_duration) => {
+                                attempt += 1;
+                                if attempt > 5 {
+                                    error!("Max retry attempts exceeded for overloaded API");
+                                    return Err(e);
+                                }
+                                let backoff = *base_duration * 2u32.pow(attempt - 1);
+                                warn!(
+                                    "API overloaded, backing off {:?} (attempt {})",
+                                    backoff, attempt
+                                );
+                                tokio::time::sleep(backoff).await;
+                                continue;
+                            }
+                            _ => return Err(e),
+                        }
+                    }
+                    return Err(e);
+                }
             }
         }
     }
@@ -455,8 +509,8 @@ impl AiProvider for ClaudeClient {
         // 2. Set the model
         claude_req.model = self.model.clone();
 
-        // 3. Make API call (will add retry logic in Step 7)
-        let response = self.post_request(&claude_req).await?;
+        // 3. Make API call with retry logic
+        let response = self.post_request_with_retry(&claude_req).await?;
 
         // 4. Translate response back to generic format
         translate_ai_response(&response)
