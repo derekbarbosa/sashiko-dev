@@ -519,31 +519,12 @@ async fn apply_single_patch(
     // Check if message_id is a valid commit SHA available in the repo
     if let Some(sha) = &p.message_id {
         if sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()) {
-            // Check if object exists
-            let status = std::process::Command::new("git")
-                .current_dir(&worktree.path)
-                .args(["cat-file", "-e", &format!("{}^{{commit}}", sha)])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            if let Ok(s) = status {
-                if s.success() {
-                    info!(
-                        "Patch {} is a valid commit {}, checking out directly...",
-                        p.index, sha
-                    );
-                    if let Err(e) = worktree.reset_hard(sha).await {
-                        error!("Failed to checkout commit {}: {}", sha, e);
-                        patch_results.push(json!({
-                            "index": p.index,
-                            "status": "error",
-                            "method": "checkout",
-                            "error": e.to_string()
-                        }));
-                        return false;
-                    }
-
+            info!(
+                "Patch {} is identified by SHA {}, attempting direct checkout...",
+                p.index, sha
+            );
+            match worktree.reset_hard(sha).await {
+                Ok(_) => {
                     if let Ok(show) = worktree.get_commit_show(sha).await {
                         patch_shows.insert(p.index, show);
                     }
@@ -554,6 +535,19 @@ async fn apply_single_patch(
                         "method": "checkout"
                     }));
                     return true;
+                }
+                Err(e) => {
+                    error!("Failed to checkout commit {}: {}", sha, e);
+                    patch_results.push(json!({
+                        "index": p.index,
+                        "status": "error",
+                        "method": "checkout",
+                        "error": e.to_string()
+                    }));
+                    // If we have a SHA ID, we MUST be able to checkout it.
+                    // Do not fallback to apply, as that implies we are applying a patch
+                    // on top of a baseline, which might be wrong if this is a remote commit.
+                    return false;
                 }
             }
         }
@@ -749,6 +743,80 @@ mod tests {
         // Verify worktree content matches feature commit
         let content = std::fs::read_to_string(worktree.path.join("file.txt"))?;
         assert!(content.contains("Change"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_apply_single_patch_checkout_failure() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let repo_path = temp_dir.path().to_path_buf();
+
+        // 1. Setup a dummy repo
+        Command::new("git")
+            .current_dir(&repo_path)
+            .arg("init")
+            .output()?;
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.email", "test@example.com"])
+            .output()?;
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.name", "Test User"])
+            .output()?;
+
+        // Initial commit
+        let file_path = repo_path.join("file.txt");
+        let mut file = File::create(&file_path)?;
+        writeln!(file, "Initial")?;
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()?;
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial"])
+            .output()?;
+
+        let initial_sha = sashiko::git_ops::get_commit_hash(&repo_path, "HEAD").await?;
+
+        // 2. Setup Worktree
+        let worktree = GitWorktree::new(&repo_path, &initial_sha, None).await?;
+
+        // 3. Prepare PatchInput with NON-EXISTENT SHA
+        // Use a valid SHA format but non-existent
+        let missing_sha = "0000000000000000000000000000000000000000".to_string();
+        let patch = PatchInput {
+            index: 1,
+            diff: "Valid Diff content that would apply if we fell back".to_string(),
+            subject: Some("Feature".to_string()),
+            author: Some("Test User <test@example.com>".to_string()),
+            date: None,
+            message_id: Some(missing_sha.clone()),
+        };
+
+        let mut patch_shas = std::collections::HashMap::new();
+        let mut patch_shows = std::collections::HashMap::new();
+        let mut patch_results = Vec::new();
+
+        // 4. Run apply_single_patch
+        let success = apply_single_patch(
+            &worktree,
+            &patch,
+            &mut patch_shas,
+            &mut patch_shows,
+            &mut patch_results,
+        )
+        .await;
+
+        // 5. Verify Failure
+        assert!(!success, "Should fail because checkout failed");
+
+        // Check result JSON
+        let result = &patch_results[0];
+        assert_eq!(result["status"], "error");
+        assert_eq!(result["method"], "checkout"); // Failed at checkout stage
 
         Ok(())
     }
