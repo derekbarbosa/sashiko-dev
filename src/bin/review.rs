@@ -386,7 +386,13 @@ async fn main() -> Result<()> {
                             .iter()
                             .map(|p| p.index)
                             .max()
-                            .and_then(|max_idx| patch_shas.get(&max_idx))
+                            .and_then(|max_idx| {
+                                patches
+                                    .iter()
+                                    .find(|p| p.index == max_idx)
+                                    .and_then(|p| p.commit_id.clone())
+                                    .or_else(|| patch_shas.get(&max_idx).cloned())
+                            })
                             .map(|end_sha| format!("{}..{}", baseline_sha, end_sha));
 
                         let mut worker = Worker::new(
