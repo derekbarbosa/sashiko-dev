@@ -40,6 +40,53 @@ pub struct Worker {
     series_range: Option<String>,
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+pub struct PatchInput {
+    pub index: i64,
+    pub diff: String,
+    pub subject: Option<String>,
+    pub author: Option<String>,
+    pub date: Option<i64>,
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub commit_id: Option<String>,
+}
+
+pub fn calculate_series_range(
+    patches: &[PatchInput],
+    patches_to_review: &[PatchInput],
+    patch_shas: &std::collections::HashMap<i64, String>,
+    baseline_sha: &str,
+) -> Option<String> {
+    if patches.is_empty() {
+        return None;
+    }
+
+    let max_patch_index = patches.iter().map(|p| p.index).max().unwrap_or(0);
+    let is_last_patch_review =
+        patches_to_review.len() == 1 && patches_to_review[0].index == max_patch_index;
+
+    if is_last_patch_review {
+        None
+    } else {
+        patches
+            .iter()
+            .map(|p| p.index)
+            .max()
+            .and_then(|max_idx| {
+                patches
+                    .iter()
+                    .find(|p| p.index == max_idx)
+                    .and_then(|p| p.commit_id.clone())
+                    .or_else(|| patch_shas.get(&max_idx).cloned())
+            })
+            .map(|end_sha| format!("{}..{}", baseline_sha, end_sha))
+    }
+}
+
 pub struct WorkerResult {
     pub output: Option<Value>,
     pub error: Option<String>,
@@ -608,6 +655,118 @@ mod tests {
     fn test_validate_inline_format_headers_in_diff_ok() {
         let content = "commit 123\n\n> #include <stdio.h>\n> void main() {}\n\nComment";
         assert!(validate_inline_format(content).is_ok());
+    }
+    #[test]
+    fn test_calculate_series_range_single_patch() {
+        let p = PatchInput {
+            index: 1,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: Some("sha1".to_string()),
+        };
+        let patches = vec![p.clone()];
+        let patches_to_review = vec![p.clone()];
+        let patch_shas = std::collections::HashMap::new();
+
+        assert_eq!(
+            calculate_series_range(&patches, &patches_to_review, &patch_shas, "base"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_calculate_series_range_multi_patch_last() {
+        let p1 = PatchInput {
+            index: 1,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: Some("sha1".to_string()),
+        };
+        let p2 = PatchInput {
+            index: 2,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: Some("sha2".to_string()),
+        };
+        let patches = vec![p1.clone(), p2.clone()];
+        let patches_to_review = vec![p2.clone()]; // Reviewing last
+        let patch_shas = std::collections::HashMap::new();
+
+        assert_eq!(
+            calculate_series_range(&patches, &patches_to_review, &patch_shas, "base"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_calculate_series_range_multi_patch_middle() {
+        let p1 = PatchInput {
+            index: 1,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: Some("sha1".to_string()),
+        };
+        let p2 = PatchInput {
+            index: 2,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: Some("sha2".to_string()),
+        };
+        let patches = vec![p1.clone(), p2.clone()];
+        let patches_to_review = vec![p1.clone()]; // Reviewing first
+        let patch_shas = std::collections::HashMap::new();
+
+        assert_eq!(
+            calculate_series_range(&patches, &patches_to_review, &patch_shas, "base"),
+            Some("base..sha2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_calculate_series_range_use_patch_shas_map() {
+        let p1 = PatchInput {
+            index: 1,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: None, // Missing in input
+        };
+        let p2 = PatchInput {
+            index: 2,
+            diff: "".to_string(),
+            subject: None,
+            author: None,
+            date: None,
+            message_id: None,
+            commit_id: None, // Missing in input
+        };
+        let patches = vec![p1.clone(), p2.clone()];
+        let patches_to_review = vec![p1.clone()];
+        
+        let mut patch_shas = std::collections::HashMap::new();
+        patch_shas.insert(2, "sha2_resolved".to_string());
+
+        assert_eq!(
+            calculate_series_range(&patches, &patches_to_review, &patch_shas, "base"),
+            Some("base..sha2_resolved".to_string())
+        );
     }
 }
 

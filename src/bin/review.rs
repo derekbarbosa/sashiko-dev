@@ -17,7 +17,10 @@ use clap::Parser;
 use sashiko::{
     git_ops::GitWorktree,
     settings::Settings,
-    worker::{Worker, WorkerConfig, prompts::PromptRegistry, tools::ToolBox},
+    worker::{
+        calculate_series_range, prompts::PromptRegistry, tools::ToolBox, PatchInput, Worker,
+        WorkerConfig,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -73,19 +76,6 @@ struct Args {
     /// Custom prompt string to append to the user task prompt.
     #[arg(long)]
     custom_prompt: Option<String>,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-struct PatchInput {
-    index: i64,
-    diff: String,
-    subject: Option<String>,
-    author: Option<String>,
-    date: Option<i64>,
-    #[serde(default)]
-    message_id: Option<String>,
-    #[serde(default)]
-    commit_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -382,26 +372,12 @@ async fn main() -> Result<()> {
                         let prompts = PromptRegistry::new(args.prompts.clone());
 
                         // Calculate series range (baseline..last_patch)
-                        let max_patch_index = patches.iter().map(|p| p.index).max().unwrap_or(0);
-                        let is_last_patch_review = patches_to_review.len() == 1
-                            && patches_to_review[0].index == max_patch_index;
-
-                        let series_range = if is_last_patch_review {
-                            None
-                        } else {
-                            patches
-                                .iter()
-                                .map(|p| p.index)
-                                .max()
-                                .and_then(|max_idx| {
-                                    patches
-                                        .iter()
-                                        .find(|p| p.index == max_idx)
-                                        .and_then(|p| p.commit_id.clone())
-                                        .or_else(|| patch_shas.get(&max_idx).cloned())
-                                })
-                                .map(|end_sha| format!("{}..{}", baseline_sha, end_sha))
-                        };
+                        let series_range = calculate_series_range(
+                            &patches,
+                            &patches_to_review,
+                            &patch_shas,
+                            &baseline_sha,
+                        );
 
                         let mut worker = Worker::new(
                             provider,
