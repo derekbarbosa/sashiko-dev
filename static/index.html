@@ -1882,6 +1882,17 @@ ${escapeHtml(data.body || '(no body)', true, false)}</pre>
                     let content = '';
 
                     // Unified format: direct content and tool_calls
+                    if (entry.thought && typeof entry.thought === 'string') {
+                        const thoughtId = `thought-${jsonCounter++}`;
+                        const previewText = entry.thought.replace(/\s+/g, ' ');
+                        const shortPreview = previewText.length > 70 ? previewText.substring(0, 70) + '...' : previewText;
+                        content += `<div class="json-expandable" style="margin: 4px 0;" onclick="toggleJsonExpand('${thoughtId}')">
+                            <span style="font-weight: bold; color: #8a2be2;">💭 Thought Process</span>
+                            <span class="json-preview" style="color: #6a737d; font-style: italic; margin-left: 8px;">${escapeHtml(shortPreview)}</span>
+                            <pre id="${thoughtId}" class="json-formatted" style="display:none; white-space: pre-wrap; font-style: italic; background: #fdfcff; border-color: #d8c1ee; color: #5a1e96; margin-top: 6px;">${escapeHtml(entry.thought)}</pre>
+                        </div>`;
+                    }
+                    
                     if (entry.content && typeof entry.content === 'string') {
                         if (role === 'tool') {
                             content += formatJsonExpandable(entry.content, jsonCounter++);
@@ -1900,7 +1911,14 @@ ${escapeHtml(data.body || '(no body)', true, false)}</pre>
                     parts.forEach(part => {
                         if (part.text) {
                             if (part.thought) {
-                                content += `<div style="color: #6a737d; font-style: italic; border-left: 2px solid #d0d7de; padding-left: 8px; margin: 4px 0;">${escapeHtml(part.text)}</div>`;
+                                const thoughtId = `thought-${jsonCounter++}`;
+                                const previewText = part.text.replace(/\s+/g, ' ');
+                                const shortPreview = previewText.length > 70 ? previewText.substring(0, 70) + '...' : previewText;
+                                content += `<div class="json-expandable" style="margin: 4px 0;" onclick="toggleJsonExpand('${thoughtId}')">
+                                    <span style="font-weight: bold; color: #8a2be2;">💭 Thought Process</span>
+                                    <span class="json-preview" style="color: #6a737d; font-style: italic; margin-left: 8px;">${escapeHtml(shortPreview)}</span>
+                                    <pre id="${thoughtId}" class="json-formatted" style="display:none; white-space: pre-wrap; font-style: italic; background: #fdfcff; border-color: #d8c1ee; color: #5a1e96; margin-top: 6px;">${escapeHtml(part.text)}</pre>
+                                </div>`;
                             } else {
                                 content += `<div>${escapeHtml(part.text)}</div>`;
                             }
