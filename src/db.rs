@@ -2805,7 +2805,9 @@ mod tests {
                 Some(1),
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2843,7 +2845,9 @@ mod tests {
                 Some(1),
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2873,7 +2877,9 @@ mod tests {
             Some(1),
             2,
             None,
-            true, None, None,
+            true,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -2898,7 +2904,9 @@ mod tests {
                 Some(1),
                 1,
                 None,
-                false, None, None,
+                false,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2922,7 +2930,9 @@ mod tests {
                 Some(2),
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -2958,7 +2968,9 @@ mod tests {
                 Some(1),
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -2985,7 +2997,9 @@ mod tests {
                 Some(1),
                 3,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3027,7 +3041,9 @@ mod tests {
                 Some(1),
                 3,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3057,7 +3073,9 @@ mod tests {
                 Some(1),
                 2,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3104,7 +3122,9 @@ mod tests {
                     None,
                     idx as u32,
                     None,
-                    true, None, None,
+                    true,
+                    None,
+                    None,
                 )
                 .await
                 .unwrap()
@@ -3157,7 +3177,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3232,7 +3254,9 @@ mod tests {
                 Some(6),
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3269,7 +3293,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3322,7 +3348,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3359,7 +3387,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3411,7 +3441,9 @@ mod tests {
                 None,
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3448,7 +3480,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3500,7 +3534,9 @@ mod tests {
                 Some(5),
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3540,7 +3576,9 @@ mod tests {
                 Some(6),
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3592,7 +3630,9 @@ mod tests {
                 Some(3),
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3629,7 +3669,9 @@ mod tests {
                 Some(3),
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3666,7 +3708,9 @@ mod tests {
                 Some(3),
                 2,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3716,7 +3760,9 @@ mod tests {
                 Some(3),
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3761,7 +3807,9 @@ mod tests {
                 parsed_ver, // Pass the result of the potentially buggy parser
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3813,7 +3861,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3863,7 +3913,9 @@ mod tests {
                 None,
                 2,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -3962,7 +4014,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4072,7 +4126,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4114,7 +4170,9 @@ mod tests {
                 None,
                 2,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4174,7 +4232,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4207,7 +4267,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4253,7 +4315,9 @@ mod tests {
                 None,
                 1,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4346,7 +4410,9 @@ mod tests {
                 None,
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()
@@ -4368,7 +4434,9 @@ mod tests {
                 None,
                 0,
                 None,
-                true, None, None,
+                true,
+                None,
+                None,
             )
             .await
             .unwrap()

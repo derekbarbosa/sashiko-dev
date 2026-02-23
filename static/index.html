@@ -1371,25 +1371,33 @@
                      statusHtml = `<div style="background:#fff0f0; border:1px solid #ffcdd2; color:#d73a49; padding:8px; border-radius:4px; margin-bottom:8px; font-family:monospace; white-space:pre-wrap; font-size:0.9em;"><strong>Patch Application Failed:</strong>\n${escapeHtml(patch.apply_error || 'Unknown error')}</div>`;
                 }
 
+                let listHtml = '';
+                if (patch && patch.status === 'Skipped') {
+                    listHtml = '<p style="font-style:italic; color:#888;">Skipped.</p>';
+                } else {
+                    listHtml = renderReviewList(reviews);
+                }
+
                 reviewsHtml += `
                     <div id="patch-${pid}" style="margin-top:12px; ${borderStyle}">
                         <h3 style="display:flex; justify-content:space-between;">
                             <span>${header}</span>
                         </h3>
                         ${statusHtml}
-                        ${renderReviewList(reviews)}
+                        ${listHtml}
                     </div>
                 `;
 
                 if (sortedPatchIds.length > 1) {
                     let summaryStatus = '';
-                    
+
                     if (patch && (patch.status === 'error' || patch.status === 'failed')) {
                         summaryStatus = `<span style="color:#d73a49; font-weight:bold">Apply Failed</span>`;
+                    } else if (patch && patch.status === 'Skipped') {
+                        summaryStatus = '<span style="color:#888">Skipped</span>';
                     } else if (!reviews || reviews.length === 0) {
                         summaryStatus = '<span style="color:#888">No reviews</span>';
-                    } else {
-                         // Aggregate "MAX" across all reviews for this patch
+                    } else {                         // Aggregate "MAX" across all reviews for this patch
                          let maxCounts = { low: 0, medium: 0, high: 0, critical: 0 };
                          let hasSuccessful = false;
                          let errors = [];

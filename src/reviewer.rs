@@ -455,10 +455,13 @@ impl Reviewer {
                     unique_patch_files.dedup();
                     let patch_files_count = unique_patch_files.len();
 
-                    let patch_lines_changed = diff.lines().filter(|line| {
-                        (line.starts_with('+') && !line.starts_with("+++"))
-                            || (line.starts_with('-') && !line.starts_with("---"))
-                    }).count();
+                    let patch_lines_changed = diff
+                        .lines()
+                        .filter(|line| {
+                            (line.starts_with('+') && !line.starts_with("+++"))
+                                || (line.starts_with('-') && !line.starts_with("---"))
+                        })
+                        .count();
 
                     if patch_lines_changed > ctx.settings.review.max_lines_changed
                         || patch_files_count > ctx.settings.review.max_files_touched
@@ -484,6 +487,7 @@ impl Reviewer {
                             "Skipping review for merge commit {} (ps={} idx={})",
                             sha, patchset_id, index
                         );
+                        let _ = ctx.db.update_patch_status(*patch_id, "Skipped").await;
                         continue;
                     }
                     if let Ok(true) = worktree.is_empty_commit(sha).await {
@@ -491,6 +495,7 @@ impl Reviewer {
                             "Skipping review for empty commit {} (ps={} idx={})",
                             sha, patchset_id, index
                         );
+                        let _ = ctx.db.update_patch_status(*patch_id, "Skipped").await;
                         continue;
                     }
                 }
