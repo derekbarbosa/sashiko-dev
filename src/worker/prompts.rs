@@ -39,6 +39,35 @@ pub struct PatchInput {
     pub commit_id: Option<String>,
 }
 
+fn validate_inline_format(content: &str) -> std::result::Result<(), String> {
+    if content.lines().any(|l| l.trim_start().starts_with("#")) {
+        return Err("The output contains Markdown headers (lines starting with '#'). It must be plain text as per `inline-template.md`.".to_string());
+    }
+    if content.lines().any(|l| l.trim_start().starts_with("```")) {
+        return Err("The output contains Markdown code blocks ('```'). It must be plain text as per `inline-template.md`.".to_string());
+    }
+    if !content.lines().any(|l| l.trim_start().starts_with(">")) {
+        return Err("The output does not appear to quote any code or context using '>'. Please follow the quoting style in `inline-template.md`.".to_string());
+    }
+    let has_commit_header = content.lines().take(20).any(|l| l.trim_start().to_lowercase().starts_with("commit "));
+    if !has_commit_header {
+        return Err("The output is missing the 'commit <hash>' header. Please start with the commit details (Commit, Author, Subject) as per `inline-template.md`.".to_string());
+    }
+    let has_author_header = content.lines().take(20).any(|l| l.trim_start().to_lowercase().starts_with("author:"));
+    if !has_author_header {
+        return Err("The output is missing the 'Author: <name>' header. Please start with the commit details (Commit, Author, Subject) as per `inline-template.md`.".to_string());
+    }
+    let has_comments = content.lines().any(|l| {
+        let trimmed = l.trim();
+        if trimmed.is_empty() || trimmed.starts_with(">") { return false; }
+        let lower = trimmed.to_lowercase();
+        !lower.starts_with("commit ") && !lower.starts_with("author:") && !lower.starts_with("date:") && !lower.starts_with("link:")
+    });
+    if !has_comments {
+        return Err("The output appears to lack any comments or summary. You must include a summary and interspersed comments explaining the findings.".to_string());
+    }
+    Ok(())
+}
 pub struct WorkerConfig {
     pub max_input_tokens: usize,
     pub max_interactions: usize,
@@ -559,12 +588,11 @@ Example:
                     total_tokens_cached += t_cached;
 
                     review_inline_text = result_text.clone();
-                    if !result_text.trim().starts_with("```") && !result_text.contains("```json") {
-                        break;
-                    } else {
-                        tracing::warn!(
-                            "Stage 9 output contained markdown code blocks or JSON, retrying..."
-                        );
+                    match validate_inline_format(&result_text) {
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!("Stage 9 output validation failed: {}. Retrying...", e);
+                        }
                     }
                 }
                 retries += 1;
