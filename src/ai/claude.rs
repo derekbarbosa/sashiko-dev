@@ -521,9 +521,16 @@ pub struct StdioClaudeClient;
 trait GenClaudeClient: Send + Sync {
     async fn exec_stdio(&self, msg: Value) -> Result<AiResponse> {
         tokio::task::spawn_blocking(move || -> Result<AiResponse> {
-            println!("{}", serde_json::to_string(&msg)?);
             use std::io::Write;
-            std::io::stdout().flush()?;
+            let mut stdout = std::io::stdout();
+            if let Err(e) = writeln!(stdout, "{}", serde_json::to_string(&msg)?) {
+                eprintln!("Fatal error: parent closed stdout. Exiting. ({})", e);
+                std::process::exit(1);
+            }
+            if let Err(e) = stdout.flush() {
+                eprintln!("Fatal error: failed flushing stdout. Exiting. ({})", e);
+                std::process::exit(1);
+            }
 
             let stdin = std::io::stdin();
             let mut line = String::new();
