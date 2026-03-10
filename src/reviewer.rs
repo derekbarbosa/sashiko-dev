@@ -170,22 +170,12 @@ impl Reviewer {
             .map(|g| g.explicit_prompt_caching)
             .unwrap_or(false);
 
-        if !self.settings.ai.no_ai && use_explicit_caching {
-            match self.cache_manager.ensure_cache(None).await {
-                Ok(name) => {
-                    info!("AI Context Cache initialized: {}", name);
-                    let mut guard = self.active_cache_name.lock().await;
-                    *guard = Some(name);
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to initialize AI Context Cache: {}. Proceeding without cache (higher cost/latency).",
-                        e
-                    );
-                }
+        if !self.settings.ai.no_ai {
+            if use_explicit_caching {
+                info!("AI Context Caching is enabled (will be initialized lazily).");
+            } else {
+                info!("Explicit caching disabled via settings.");
             }
-        } else if !self.settings.ai.no_ai {
-            info!("Explicit caching disabled via settings.");
         }
 
         let worktree_dir = PathBuf::from(&self.settings.review.worktree_dir);
@@ -228,6 +218,32 @@ impl Reviewer {
         }
 
         info!("Found {} pending patchsets for review", patchsets.len());
+
+        let use_explicit_caching = self
+            .settings
+            .ai
+            .gemini
+            .as_ref()
+            .map(|g| g.explicit_prompt_caching)
+            .unwrap_or(false);
+
+        if !self.settings.ai.no_ai && use_explicit_caching {
+            let mut guard = self.active_cache_name.lock().await;
+            if guard.is_none() {
+                match self.cache_manager.ensure_cache(None).await {
+                    Ok(name) => {
+                        info!("AI Context Cache initialized (lazy): {}", name);
+                        *guard = Some(name);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to initialize AI Context Cache: {}. Proceeding without cache (higher cost/latency).",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         let current_cache_name = self.active_cache_name.lock().await.clone();
 
