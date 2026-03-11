@@ -40,9 +40,6 @@ pub struct PatchInput {
 }
 
 fn validate_inline_format(content: &str) -> std::result::Result<(), String> {
-    if content.lines().any(|l| l.trim_start().starts_with("#")) {
-        return Err("The output contains Markdown headers (lines starting with '#'). It must be plain text as per `inline-template.md`.".to_string());
-    }
     if content.lines().any(|l| l.trim_start().starts_with("```")) {
         return Err("The output contains Markdown code blocks ('```'). It must be plain text as per `inline-template.md`.".to_string());
     }
