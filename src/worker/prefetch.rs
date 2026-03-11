@@ -61,6 +61,150 @@ pub fn parse_diff_ranges(diff: &str) -> HashMap<String, Vec<(usize, usize)>> {
 
 /// Uses Tree-sitter to extract the highest-level meaningful enclosing block (like a function or struct)
 /// for a given line range. Returns the source code of that block.
+use grep_regex::RegexMatcher;
+use grep_searcher::{BinaryDetection, SearcherBuilder};
+use ignore::WalkBuilder;
+use std::sync::{Arc, Mutex};
+
+const MAX_PREFETCH_CHARS: usize = 200000;
+
+pub async fn prefetch_context(worktree_path: &Path, diff: &str) -> Result<String> {
+    let mut context_blocks = Vec::new();
+    let mut current_chars = 0;
+    let file_ranges = parse_diff_ranges(diff);
+    let mut symbols_to_lookup = HashSet::new();
+
+    for (file, ranges) in file_ranges {
+        if !file.ends_with(".c") && !file.ends_with(".h") {
+            continue;
+        }
+        let file_path = worktree_path.join(&file);
+        if !file_path.exists() {
+            continue;
+        }
+
+        if let Ok(content) = fs::read_to_string(&file_path).await {
+            let mut extracted_blocks = HashSet::new();
+            for (start, end) in ranges {
+                if let Some(block) = extract_enclosing_block(&content, start, end) {
+                    extracted_blocks.insert(block);
+                }
+                let ids = extract_identifiers(&content, start, end);
+                symbols_to_lookup.extend(ids);
+            }
+            for block in extracted_blocks {
+                let block_str = format!("--- Extracted Context from {} ---\n{}\n", file, block);
+                if current_chars + block_str.len() > MAX_PREFETCH_CHARS {
+                    context_blocks.push("\n... (Context prefetch limits reached)\n".to_string());
+                    return Ok(context_blocks.join("\n"));
+                }
+                current_chars += block_str.len();
+                context_blocks.push(block_str);
+            }
+        }
+    }
+
+    let symbols: Vec<String> = symbols_to_lookup.into_iter().take(50).collect();
+    if symbols.is_empty() {
+        return Ok(context_blocks.join("\n"));
+    }
+
+    let regex_pattern = format!(
+        "^((struct|enum|union)\\s+({0})\\b|#define\\s+({0})\\b|([a-zA-Z_][a-zA-Z0-9_ \\t*]+\\s+)?({0})\\s*\\()",
+        symbols.join("|")
+    );
+
+    let matcher = match RegexMatcher::new(&regex_pattern) {
+        Ok(m) => m,
+        Err(_) => return Ok(context_blocks.join("\n")),
+    };
+
+    let search_path = worktree_path.to_path_buf();
+    let definitions = Arc::new(Mutex::new(HashMap::new()));
+    let definitions_clone = Arc::clone(&definitions);
+
+    let _ = tokio::task::spawn_blocking(move || {
+        let walker = WalkBuilder::new(&search_path)
+            .hidden(false)
+            .ignore(true)
+            .git_ignore(true)
+            .build_parallel();
+
+        walker.run(|| {
+            let matcher = matcher.clone();
+            let definitions = Arc::clone(&definitions_clone);
+
+            let symbols = symbols.clone();
+            Box::new(move |result| {
+                if let Ok(entry) = result {
+                    if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                        return ignore::WalkState::Continue;
+                    }
+
+                    let path = entry.path().to_path_buf();
+                    if !path.to_string_lossy().ends_with(".h")
+                        && !path.to_string_lossy().ends_with(".c")
+                    {
+                        return ignore::WalkState::Continue;
+                    }
+
+                    let mut searcher = SearcherBuilder::new()
+                        .binary_detection(BinaryDetection::quit(b'\x00'))
+                        .line_number(true)
+                        .build();
+
+                    let _ = searcher.search_path(&matcher, &path, grep_searcher::sinks::UTF8(|line_num, line| {
+                        
+                            for sym in &symbols {
+                                // Simple heuristic: does the line contain the symbol?
+                                // A more accurate way would be to run the specific symbol regex again, but this is fast.
+                                if line.contains(sym) {
+                                    let mut defs = definitions.lock().unwrap();
+                                    if !defs.contains_key(sym) {
+                                        defs.insert(sym.clone(), (path.clone(), line_num));
+                                    }
+                                }
+                            }
+                        Ok(true)
+                    }));
+                }
+                ignore::WalkState::Continue
+            })
+        });
+    })
+    .await;
+
+    let mut defs_vec = Vec::new();
+    {
+        let mut defs = definitions.lock().unwrap();
+        defs_vec.extend(defs.drain());
+    }
+    for (sym, (path, line_num)) in defs_vec {
+        if let Ok(content) = fs::read_to_string(&path).await {
+            let line_idx = line_num.saturating_sub(1) as usize;
+            if let Some(block) = extract_enclosing_block(&content, line_idx, line_idx) {
+                let filename = path
+                    .strip_prefix(worktree_path)
+                    .unwrap_or(&path)
+                    .to_string_lossy();
+                let def_str = format!(
+                    "--- Extracted Definition of {} from {} ---\n{}\n",
+                    sym, filename, block
+                );
+
+                if current_chars + def_str.len() > MAX_PREFETCH_CHARS {
+                    context_blocks
+                        .push("\n... (Definitions prefetch limits reached)\n".to_string());
+                    break;
+                }
+                current_chars += def_str.len();
+                context_blocks.push(def_str);
+            }
+        }
+    }
+
+    Ok(context_blocks.join("\n"))
+}
 pub fn extract_enclosing_block(
     source_code: &str,
     start_line: usize,
@@ -72,22 +216,17 @@ pub fn extract_enclosing_block(
     let tree = parser.parse(source_code, None)?;
     let root_node = tree.root_node();
 
-    // Point uses row (0-based line) and column (0-based byte).
-    // We want the narrowest descendant that completely covers our line range.
     let start_point = Point::new(start_line, 0);
-    // Approximate end of line by using a large column value, or just 0 of next line.
     let end_point = Point::new(end_line, usize::MAX);
 
     let mut current_node = root_node.descendant_for_point_range(start_point, end_point)?;
 
-    // We don't just want the exact line (which might be an `expression_statement` or `if_statement`).
-    // We want the parent function, struct, or top-level declaration.
     let target_kinds = [
         "function_definition",
         "struct_specifier",
         "enum_specifier",
         "union_specifier",
-        "declaration", // Top level declarations
+        "declaration",
         "type_definition",
     ];
 
@@ -96,8 +235,6 @@ pub fn extract_enclosing_block(
     loop {
         if target_kinds.contains(&current_node.kind()) {
             found_block = Some(current_node);
-            // Don't break immediately; we might be inside a nested struct inside a function.
-            // But usually, function_definition is good enough. Let's stick to the first match going up.
             break;
         }
         if let Some(parent) = current_node.parent() {
@@ -107,23 +244,37 @@ pub fn extract_enclosing_block(
         }
     }
 
-    // If we didn't find a top-level structure, fallback to a window of lines around the change
     if let Some(node) = found_block {
         let start_byte = node.start_byte();
         let end_byte = node.end_byte();
+        let lines_count = node
+            .end_position()
+            .row
+            .saturating_sub(node.start_position().row);
+
         if start_byte < source_code.len() && end_byte <= source_code.len() {
+            if lines_count > 200 {
+                return Some(format!(
+                    "// Block is too large ({} lines), truncated to 200 lines around the change...\n{}",
+                    lines_count,
+                    truncate_to_window(source_code, start_line, end_line)
+                ));
+            }
             return Some(source_code[start_byte..end_byte].to_string());
         }
     }
 
-    // Fallback: 20 lines around the change if it's completely outside any known block (e.g. macro definition)
+    Some(truncate_to_window(source_code, start_line, end_line))
+}
+
+fn truncate_to_window(source_code: &str, start_line: usize, end_line: usize) -> String {
     let lines: Vec<&str> = source_code.lines().collect();
     let start = start_line.saturating_sub(20);
     let end = std::cmp::min(lines.len().saturating_sub(1), end_line + 20);
     if start <= end && start < lines.len() {
-        Some(lines[start..=end].join("\n"))
+        lines[start..=end].join("\n")
     } else {
-        None
+        String::new()
     }
 }
 
@@ -182,88 +333,6 @@ pub fn extract_identifiers(
         walk(node, source_code.as_bytes(), &mut ids);
     }
     ids
-}
-
-pub async fn prefetch_context(worktree_path: &Path, diff: &str) -> Result<String> {
-    let mut context_blocks = Vec::new();
-    let file_ranges = parse_diff_ranges(diff);
-
-    let mut symbols_to_lookup = HashSet::new();
-
-    for (file, ranges) in file_ranges {
-        if !file.ends_with(".c") && !file.ends_with(".h") {
-            continue; // Only C/C++ files for tree-sitter-c
-        }
-
-        let file_path = worktree_path.join(&file);
-        if !file_path.exists() {
-            continue;
-        }
-
-        if let Ok(content) = fs::read_to_string(&file_path).await {
-            // We use a HashSet (or sort/dedup) to avoid repeating the exact same block
-            // if multiple hunks fall in the same function.
-            let mut extracted_blocks = HashSet::new();
-
-            for (start, end) in ranges {
-                if let Some(block) = extract_enclosing_block(&content, start, end) {
-                    extracted_blocks.insert(block);
-                }
-                let ids = extract_identifiers(&content, start, end);
-                symbols_to_lookup.extend(ids);
-            }
-
-            for block in extracted_blocks {
-                context_blocks.push(format!(
-                    "--- Extracted Context from {} ---\n{}\n",
-                    file, block
-                ));
-            }
-        }
-    }
-
-    let mut definitions = Vec::new();
-    let symbols: Vec<String> = symbols_to_lookup.into_iter().take(15).collect();
-    for symbol in symbols {
-        let regex = format!(
-            "^(struct|enum|union)\\s+{0}\\b|^#define\\s+{0}\\b|^([a-zA-Z_][a-zA-Z0-9_ \\t*]+\\s+)?{0}\\s*\\(",
-            symbol
-        );
-        if let Ok(output) = tokio::process::Command::new("git")
-            .current_dir(worktree_path)
-            .args(["grep", "-n", "-E", &regex])
-            .output()
-            .await
-            && output.status.success()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(first_line) = stdout.lines().next() {
-                let parts: Vec<&str> = first_line.splitn(3, ':').collect();
-                if parts.len() >= 2 {
-                    let filename = parts[0];
-                    if let Ok(line_num) = parts[1].parse::<usize>() {
-                        let file_path = worktree_path.join(filename);
-                        if let Ok(file_content) = fs::read_to_string(file_path).await {
-                            let line_0 = line_num.saturating_sub(1);
-                            if let Some(block) =
-                                extract_enclosing_block(&file_content, line_0, line_0)
-                            {
-                                definitions.push(format!(
-                                    "--- Extracted Definition of {} from {} ---
-{}
-",
-                                    symbol, filename, block
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    context_blocks.extend(definitions);
-
-    Ok(context_blocks.join("\n"))
 }
 
 #[cfg(test)]
