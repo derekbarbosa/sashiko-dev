@@ -83,7 +83,6 @@ pub struct WorkerConfig {
     pub max_input_tokens: usize,
     pub max_interactions: usize,
     pub temperature: f32,
-    pub cache_name: Option<String>,
     pub custom_prompt: Option<String>,
     pub series_range: Option<String>,
 }
@@ -349,7 +348,6 @@ pub struct Worker {
     max_interactions: usize,
     temperature: f32,
     series_range: Option<String>,
-    cache_name: Option<String>,
 }
 
 impl Worker {
@@ -367,7 +365,6 @@ impl Worker {
             max_interactions: config.max_interactions,
             temperature: config.temperature,
             series_range: config.series_range,
-            cache_name: config.cache_name,
         }
     }
 
@@ -416,12 +413,7 @@ impl Worker {
             clean_dynamic_context.push_str("If it's not sufficient, you MUST use available tools to explore the source code. Don't make assumptions without actually looking into the relevant code.\n\n");
             clean_dynamic_context.push_str("{{prefetched_context}}\n</pre_fetched_context>\n");
         }
-
-        let (shared_context, clean_shared_context) = if self.cache_name.is_some() {
-            // When using explicit cache (e.g. Gemini), the static_context is already in the cache.
-            // We only need to provide the dynamic context as our system prompt.
-            (dynamic_context, clean_dynamic_context)
-        } else {
+        let (shared_context, clean_shared_context) = {
             // Without cache (or with implicit cache like Claude), we send everything.
             (
                 format!("{}{}", static_context, dynamic_context),
@@ -778,7 +770,7 @@ Example:
                 messages: local_history.clone(),
                 tools: Some(self.tools.get_declarations_generic()),
                 temperature: Some(self.temperature),
-                preloaded_context: self.cache_name.clone(),
+
                 response_format: None,
             };
 

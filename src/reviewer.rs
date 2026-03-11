@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use crate::ReviewStatus;
-use crate::ai::cache::CacheManager;
 use crate::ai::quota::QuotaManager;
-use crate::ai::{AiProvider, AiRequest, AiResponse, create_provider};
+use crate::ai::{AiProvider, AiRequest, create_provider};
 use crate::baseline::{BaselineRegistry, BaselineResolution, extract_files_from_diff};
 use crate::db::{AiInteractionParams, Database, Finding, PatchsetRow, Severity, ToolUsage};
 use crate::git_ops::{GitWorktree, ensure_remote, get_commit_hash};
@@ -30,7 +29,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -40,9 +39,6 @@ struct ReviewContext {
     settings: Settings,
     baseline_registry: Arc<BaselineRegistry>,
     quota_manager: Arc<QuotaManager>,
-    cache_manager: Arc<CacheManager>,
-    active_cache_name: Arc<Mutex<Option<String>>>,
-    current_cache_name: Option<String>,
     target_review_count: usize,
     provider: Arc<dyn AiProvider>,
 }
@@ -82,12 +78,8 @@ pub struct Reviewer {
     semaphore: Arc<Semaphore>,
     baseline_registry: Arc<BaselineRegistry>,
     quota_manager: Arc<QuotaManager>,
-    cache_manager: Arc<CacheManager>,
-    active_cache_name: Arc<Mutex<Option<String>>>,
     provider: Arc<dyn AiProvider>,
 }
-
-use crate::worker::tools::ToolBox;
 
 impl Reviewer {
     /// Creates a new `Reviewer` instance.
@@ -118,29 +110,12 @@ impl Reviewer {
 
         // Initialize CacheManager
         // Assuming prompts are in "third_party/prompts/kernel" in CWD.
-        let prompts_dir = PathBuf::from("third_party/prompts/kernel");
-
-        // We need tool definitions for the cache.
-        // We use dummy paths for ToolBox here because we only need declarations,
-        // not execution capability.
-        let tools_def = ToolBox::new(PathBuf::from("."), None).get_declarations_generic();
-
-        let cache_manager = Arc::new(CacheManager::new(
-            prompts_dir,
-            provider.clone(),
-            settings.ai.model.clone(),
-            "3600s".to_string(),
-            Some(tools_def),
-        ));
-
         Self {
             db,
             settings,
             semaphore: Arc::new(Semaphore::new(concurrency)),
             baseline_registry,
             quota_manager: Arc::new(QuotaManager::new()),
-            cache_manager,
-            active_cache_name: Arc::new(Mutex::new(None)),
             provider,
         }
     }
@@ -162,22 +137,6 @@ impl Reviewer {
         }
 
         // Ensure Context Cache
-        let use_explicit_caching = self
-            .settings
-            .ai
-            .gemini
-            .as_ref()
-            .map(|g| g.explicit_prompt_caching)
-            .unwrap_or(false);
-
-        if !self.settings.ai.no_ai {
-            if use_explicit_caching {
-                info!("AI Context Caching is enabled (will be initialized lazily).");
-            } else {
-                info!("Explicit caching disabled via settings.");
-            }
-        }
-
         let worktree_dir = PathBuf::from(&self.settings.review.worktree_dir);
         if worktree_dir.exists() {
             info!(
@@ -219,34 +178,6 @@ impl Reviewer {
 
         info!("Found {} pending patchsets for review", patchsets.len());
 
-        let use_explicit_caching = self
-            .settings
-            .ai
-            .gemini
-            .as_ref()
-            .map(|g| g.explicit_prompt_caching)
-            .unwrap_or(false);
-
-        if !self.settings.ai.no_ai && use_explicit_caching {
-            let mut guard = self.active_cache_name.lock().await;
-            if guard.is_none() {
-                match self.cache_manager.ensure_cache(None).await {
-                    Ok(name) => {
-                        info!("AI Context Cache initialized (lazy): {}", name);
-                        *guard = Some(name);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to initialize AI Context Cache: {}. Proceeding without cache (higher cost/latency).",
-                            e
-                        );
-                    }
-                }
-            }
-        }
-
-        let current_cache_name = self.active_cache_name.lock().await.clone();
-
         for patchset in patchsets {
             let permit = self.semaphore.clone().acquire_owned().await?;
             let target_review_count = patchset.target_review_count.unwrap_or(1) as usize;
@@ -257,9 +188,6 @@ impl Reviewer {
                 settings: self.settings.clone(),
                 baseline_registry: self.baseline_registry.clone(),
                 quota_manager: self.quota_manager.clone(),
-                cache_manager: self.cache_manager.clone(),
-                active_cache_name: self.active_cache_name.clone(),
-                current_cache_name: current_cache_name.clone(),
                 target_review_count,
                 provider: self.provider.clone(),
             };
@@ -1042,9 +970,6 @@ impl Reviewer {
                 Some(index),
                 commit_sha.clone(),
                 ctx.quota_manager.clone(),
-                ctx.current_cache_name.as_deref(),
-                ctx.cache_manager.clone(),
-                ctx.active_cache_name.clone(),
                 review_id,
                 worktree_path,
                 ctx.provider.clone(),
@@ -1330,9 +1255,6 @@ async fn run_review_tool(
     review_index: Option<i64>,
     review_commit: Option<String>,
     quota_manager: Arc<QuotaManager>,
-    cache_name: Option<&str>,
-    cache_manager: Arc<CacheManager>,
-    active_cache_name: Arc<Mutex<Option<String>>>,
     review_id: i64,
     worktree_path: Option<&Path>,
     provider: Arc<dyn AiProvider>,
@@ -1374,17 +1296,6 @@ async fn run_review_tool(
 
     if let Some(commit) = review_commit {
         cmd.arg("--review-commit").arg(commit);
-    }
-
-    if let Some(name) = cache_name
-        && settings
-            .ai
-            .gemini
-            .as_ref()
-            .map(|g| g.explicit_prompt_caching)
-            .unwrap_or(false)
-    {
-        cmd.arg("--gemini-cache").arg(name);
     }
 
     if settings.ai.no_ai {
@@ -1437,251 +1348,139 @@ async fn run_review_tool(
     let mut deadline = TokioInstant::now() + Duration::from_secs(settings.review.timeout_seconds);
 
     let interaction_result = async {
-            // Send initial payload
-            let mut input_str = serde_json::to_string(input_payload)?;
-            input_str.push('\n');
-            stdin.write_all(input_str.as_bytes()).await?;
-            stdin.flush().await?;
+        // Send initial payload
+        let mut input_str = serde_json::to_string(input_payload)?;
+        input_str.push('\n');
+        stdin.write_all(input_str.as_bytes()).await?;
+        stdin.flush().await?;
 
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            let mut final_result: Option<Value> = None;
-            let mut ai_started = false;
+        let reader = BufReader::new(stdout);
+        let mut lines = reader.lines();
+        let mut final_result: Option<Value> = None;
+        let mut ai_started = false;
 
-            loop {
-                let line_result = match timeout_at(deadline, lines.next_line()).await {
-                    Ok(res) => res,
-                    Err(_) => {
-                        return Err(anyhow::anyhow!("Review tool timed out (active time exceeded)"));
-                    }
-                };
+        loop {
+            let line_result = match timeout_at(deadline, lines.next_line()).await {
+                Ok(res) => res,
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Review tool timed out (active time exceeded)"
+                    ));
+                }
+            };
 
-                let line = match line_result {
-                    Ok(Some(l)) => l,
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::error!("Error reading line from child: {}", e);
-                        break;
-                    }
-                };
-                // Try to parse as JSON
-                if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
-                    if let Some(type_str) = json_msg.get("type").and_then(|v| v.as_str()) {
-                        match type_str {
-                            "ai_request" | "ai_request_with_cache" => {
-                                if !ai_started {
-                                    let _ = db
-                                        .update_review_status(
-                                            review_id,
-                                            ReviewStatus::InReview.as_str(),
-                                            None,
-                                        )
-                                        .await;
-                                    ai_started = true;
-                                }
-                                if let Some(payload_val) = json_msg.get("payload")
-                                    && let Ok(mut req) =
-                                        serde_json::from_value::<AiRequest>(payload_val.clone())
-                                    {
-                                        // Update stale cache name if needed
-                                        {
-                                            let guard = active_cache_name.lock().await;
-                                            if let Some(active_name) = guard.as_ref()
-                                                && req.preloaded_context.is_some()
-                                                    && req.preloaded_context.as_ref()
-                                                        != Some(active_name)
-                                                {
-                                                    info!(
-                                                        "Updating stale cache name in request: {:?} -> {}",
-                                                        req.preloaded_context, active_name
-                                                    );
-                                                    req.preloaded_context =
-                                                        Some(active_name.clone());
-                                                }
-                                        }
+            let line = match line_result {
+                Ok(Some(l)) => l,
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::error!("Error reading line from child: {}", e);
+                    break;
+                }
+            };
+            // Try to parse as JSON
+            if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
+                if let Some(type_str) = json_msg.get("type").and_then(|v| v.as_str()) {
+                    match type_str {
+                        "ai_request" | "ai_request_with_cache" => {
+                            if !ai_started {
+                                let _ = db
+                                    .update_review_status(
+                                        review_id,
+                                        ReviewStatus::InReview.as_str(),
+                                        None,
+                                    )
+                                    .await;
+                                ai_started = true;
+                            }
+                            if let Some(payload_val) = json_msg.get("payload")
+                                && let Ok(req) =
+                                    serde_json::from_value::<AiRequest>(payload_val.clone())
+                            {
+                                let resp_payload = loop {
+                                    let slept = quota_manager.wait_for_access().await;
+                                    deadline += slept;
 
-                                        let mut cache_retry_done = false;
-                                        let resp_payload = loop {
-                                            let slept = quota_manager.wait_for_access().await;
-                                            deadline += slept;
-
-                                            if TokioInstant::now() > deadline {
-                                                break Err(anyhow::anyhow!("Review tool timed out (active time exceeded)"));
-                                            }
-
-                                            match provider.generate_content(req.clone()).await {
-                                                Ok(resp) => {
-                                                    quota_manager.report_success().await;
-                                                    break Ok(resp);
-                                                }
-                                                Err(e) => {
-                                                    let err_str = e.to_string();
-
-                                                    // Categorize and report errors to QuotaManager
-                                                    if err_str.contains("Quota exceeded") || err_str.contains("429") {
-                                                        quota_manager.report_quota_error(Duration::from_secs(60)).await;
-                                                        continue;
-                                                    }
-                                                    if err_str.contains("Transient error") || err_str.contains("503") || err_str.contains("529") || err_str.contains("overloaded") {
-                                                        quota_manager.report_transient_error().await;
-                                                        continue;
-                                                    }
-
-                                                    // Handle Gemini context cache expiration (403 Permission Denied: CachedContent not found)
-                                                    if !cache_retry_done
-                                                        && err_str.contains("403")
-                                                        && err_str.contains("CachedContent not found")
-                                                    {
-                                                        warn!("AI Context Cache expired or not found. Refreshing...");
-                                                        cache_retry_done = true;
-
-                                                        let mut guard =
-                                                            active_cache_name.lock().await;
-
-                                                        let stale_cache =
-                                                            req.preloaded_context.clone();
-
-                                                        // Check if another task already refreshed it
-                                                        if let Some(active_name) = guard.as_ref()
-                                                            && stale_cache.as_ref()
-                                                                != Some(active_name)
-                                                            {
-                                                                info!(
-                                                                    "Cache already refreshed by another task: {:?} -> {}",
-                                                                    stale_cache, active_name
-                                                                );
-                                                                req.preloaded_context =
-                                                                    Some(active_name.clone());
-                                                                drop(guard);
-                                                                continue;
-                                                            }
-
-                                                        // Clear the current active cache name as requested
-                                                        *guard = None;
-
-                                                        // Refresh cache via manager
-                                                        match cache_manager
-                                                            .ensure_cache(stale_cache.as_deref())
-                                                            .await
-                                                        {
-                                                            Ok(new_name) => {
-                                                                info!(
-                                                                    "AI Context Cache refreshed: {}",
-                                                                    new_name
-                                                                );
-                                                                *guard = Some(new_name.clone());
-                                                                req.preloaded_context =
-                                                                    Some(new_name);
-                                                                drop(guard);
-                                                                continue;
-                                                            }
-                                                            Err(refresh_err) => {
-                                                                error!(
-                                                                    "Failed to refresh AI Context Cache: {}",
-                                                                    refresh_err
-                                                                );
-                                                                // If refresh failed, we break with original error or refresh error
-                                                                break Err(refresh_err);
-                                                            }
-                                                        }
-                                                    }
-
-                                                    break Err(e);
-                                                }
-                                            }
-                                        };
-
-                                        let reply = match resp_payload {
-                                            Ok(p) => json!({ "type": "ai_response", "payload": p }),
-                                            Err(e) => {
-                                                json!({ "type": "error", "payload": e.to_string() })
-                                            }
-                                        };
-                                        let mut reply_str = serde_json::to_string(&reply)?;
-                                        reply_str.push('\n');
-                                        if let Err(e) = stdin.write_all(reply_str.as_bytes()).await {
-                                            error!("Failed to write AI response to child: {}", e);
-                                            break;
-                                        }
-                                        let _ = stdin.flush().await;
+                                    if TokioInstant::now() > deadline {
+                                        break Err(anyhow::anyhow!(
+                                            "Review tool timed out (active time exceeded)"
+                                        ));
                                     }
-                            }
-                            "ai_create_cache" => {
-                                if let Some(payload) = json_msg.get("payload")
-                                    && let Ok(req) =
-                                        serde_json::from_value::<AiRequest>(payload["request"].clone())
-                                    {
-                                        let ttl = payload["ttl"].as_str().unwrap_or("3600s").to_string();
-                                        let display_name = payload["display_name"].as_str().map(|s| s.to_string());
 
-                                        let result = provider.create_context_cache(req, ttl, display_name).await;
-                                        let reply = match result {
-                                            Ok(name) => json!({
-                                                "type": "ai_response",
-                                                "payload": AiResponse {
-                                                    content: Some(name),
-                                                    thought: None,
-            tool_calls: None,
-                                                    usage: None,
-                                                }
-                                            }),
-                                            Err(e) => json!({ "type": "error", "payload": e.to_string() }),
-                                        };
-                                        let mut reply_str = serde_json::to_string(&reply)?;
-                                        reply_str.push('\n');
-                                        stdin.write_all(reply_str.as_bytes()).await?;
-                                        stdin.flush().await?;
-                                    }
-                            }
-                            "ai_delete_cache" => {
-                                if let Some(name) = json_msg.get("payload").and_then(|v| v.as_str()) {
-                                    let result = provider.delete_context_cache(name).await;
-                                    let reply = match result {
-                                        Ok(_) => json!({
-                                            "type": "ai_response",
-                                            "payload": AiResponse {
-                                                content: None,
-                                                thought: None,
-            tool_calls: None,
-                                                usage: None,
+                                    match provider.generate_content(req.clone()).await {
+                                        Ok(resp) => {
+                                            quota_manager.report_success().await;
+                                            break Ok(resp);
+                                        }
+                                        Err(e) => {
+                                            let err_str = e.to_string();
+
+                                            // Categorize and report errors to QuotaManager
+                                            if err_str.contains("Quota exceeded")
+                                                || err_str.contains("429")
+                                            {
+                                                quota_manager
+                                                    .report_quota_error(Duration::from_secs(60))
+                                                    .await;
+                                                continue;
                                             }
-                                        }),
-                                        Err(e) => json!({ "type": "error", "payload": e.to_string() }),
-                                    };
-                                    let mut reply_str = serde_json::to_string(&reply)?;
-                                    reply_str.push('\n');
-                                    stdin.write_all(reply_str.as_bytes()).await?;
-                                    stdin.flush().await?;
-                                }
-                            }
-                            _ => {
-                                // Unknown type. Assume it's result if it matches result structure.
-                                if json_msg.get("patchset_id").is_some() {
-                                    final_result = Some(json_msg);
+                                            if err_str.contains("Transient error")
+                                                || err_str.contains("503")
+                                                || err_str.contains("529")
+                                                || err_str.contains("overloaded")
+                                            {
+                                                quota_manager.report_transient_error().await;
+                                                continue;
+                                            }
+
+                                            break Err(e);
+                                        }
+                                    }
+                                };
+
+                                let reply = match resp_payload {
+                                    Ok(p) => json!({ "type": "ai_response", "payload": p }),
+                                    Err(e) => {
+                                        json!({ "type": "error", "payload": e.to_string() })
+                                    }
+                                };
+                                let mut reply_str = serde_json::to_string(&reply)?;
+                                reply_str.push('\n');
+                                if let Err(e) = stdin.write_all(reply_str.as_bytes()).await {
+                                    error!("Failed to write AI response to child: {}", e);
                                     break;
                                 }
+                                let _ = stdin.flush().await;
                             }
                         }
-                    } else {
-                        // No type. Result?
-                        if json_msg.get("patchset_id").is_some() {
-                            final_result = Some(json_msg);
-                            break;
+                        _ => {
+                            // Unknown type. Assume it's result if it matches result structure.
+                            if json_msg.get("patchset_id").is_some() {
+                                final_result = Some(json_msg);
+                                break;
+                            }
                         }
                     }
                 } else {
-                    // Non-JSON line. Log it.
-                    warn!("Review tool stdout: {}", line);
+                    // No type. Result?
+                    if json_msg.get("patchset_id").is_some() {
+                        final_result = Some(json_msg);
+                        break;
+                    }
                 }
-            }
-
-            // Return result
-            if let Some(res) = final_result {
-                Ok(res)
             } else {
-                Err(anyhow::anyhow!("Review tool finished without valid result"))
+                // Non-JSON line. Log it.
+                warn!("Review tool stdout: {}", line);
             }
-        }.await;
+        }
+
+        // Return result
+        if let Some(res) = final_result {
+            Ok(res)
+        } else {
+            Err(anyhow::anyhow!("Review tool finished without valid result"))
+        }
+    }
+    .await;
 
     // Handle timeout and child process cleanup
     // Interaction finished (Success or Error inside interaction)
@@ -1855,14 +1654,6 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
 
         let _db = Arc::new(Database::new(&settings.database).await?);
         let _quota_manager = Arc::new(QuotaManager::new());
-        let _cache_manager = Arc::new(CacheManager::new(
-            PathBuf::from("."),
-            Arc::new(MockProvider),
-            "mock".to_string(),
-            "1h".to_string(),
-            None,
-        ));
-        let _active_cache_name: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let provider = Arc::new(MockProvider);
         // We manually spawn the mock and run the same loop as run_review_tool
         let mut cmd = Command::new(&bin_path);
@@ -1895,7 +1686,6 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
                                 messages: vec![],
                                 tools: None,
                                 temperature: None,
-                                preloaded_context: None,
                                 response_format: None,
                             })
                             .await?;
@@ -1927,252 +1717,6 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
     }
 
     #[tokio::test]
-    async fn test_reactive_cache_refresh() -> Result<()> {
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        let call_count = Arc::new(AtomicU32::new(0));
-        let refresh_count = Arc::new(AtomicU32::new(0));
-
-        struct ReactiveMockProvider {
-            call_count: Arc<AtomicU32>,
-            refresh_count: Arc<AtomicU32>,
-        }
-        #[async_trait]
-        impl AiProvider for ReactiveMockProvider {
-            async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
-                let count = self.call_count.fetch_add(1, Ordering::SeqCst);
-                if count == 0 {
-                    // First call fails with 403
-                    assert_eq!(request.preloaded_context.as_deref(), Some("stale-cache"));
-                    anyhow::bail!("403 Permission Denied: CachedContent not found");
-                } else {
-                    // Second call succeeds
-                    assert_eq!(request.preloaded_context.as_deref(), Some("fresh-cache"));
-                    Ok(AiResponse {
-                        content: Some("Success after refresh".to_string()),
-                        thought: None,
-                        tool_calls: None,
-                        usage: None,
-                    })
-                }
-            }
-            async fn create_context_cache(
-                &self,
-                _request: AiRequest,
-                _ttl: String,
-                _display_name: Option<String>,
-            ) -> Result<String> {
-                self.refresh_count.fetch_add(1, Ordering::SeqCst);
-                Ok("fresh-cache".to_string())
-            }
-            fn estimate_tokens(&self, _request: &AiRequest) -> usize {
-                0
-            }
-            fn get_capabilities(&self) -> ProviderCapabilities {
-                ProviderCapabilities {
-                    model_name: "mock".to_string(),
-                    context_window_size: 1000,
-                }
-            }
-        }
-
-        let temp_dir = tempdir()?;
-        let bin_path = temp_dir.path().join("mock_review_cache");
-
-        let mock_script = r#"#!/bin/bash
-read -r input
-# Child sends request with stale cache
-echo '{"type": "ai_request", "payload": {"messages": [], "preloaded_context": "stale-cache"}}'
-read -r response
-# Child receives response and prints it
-echo "$response"
-echo '{"patchset_id": 1, "patches": []}'
-"#;
-        std::fs::write(&bin_path, mock_script)?;
-        std::fs::set_permissions(&bin_path, Permissions::from_mode(0o755))?;
-
-        let mut settings = Settings::new()?;
-        settings.database.url = ":memory:".to_string();
-        let _db = Arc::new(Database::new(&settings.database).await?);
-        let _quota_manager = Arc::new(QuotaManager::new());
-        let provider = Arc::new(ReactiveMockProvider {
-            call_count: call_count.clone(),
-            refresh_count: refresh_count.clone(),
-        });
-        let cache_manager = Arc::new(CacheManager::new(
-            PathBuf::from("."),
-            provider.clone(),
-            "mock".to_string(),
-            "1h".to_string(),
-            None,
-        ));
-        let active_cache_name = Arc::new(Mutex::new(Some("stale-cache".to_string())));
-
-        let mut cmd = Command::new(&bin_path);
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
-        let mut child = cmd.spawn()?;
-        let mut stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-
-        // This block effectively runs the interaction loop from run_review_tool
-        let mut reader = BufReader::new(stdout).lines();
-        stdin.write_all(b"{}\n").await?;
-        stdin.flush().await?;
-
-        while let Ok(Some(line)) = reader.next_line().await {
-            if let Ok(json_msg) = serde_json::from_str::<Value>(&line) {
-                if json_msg["type"] == "ai_request" {
-                    let mut req: AiRequest = serde_json::from_value(json_msg["payload"].clone())?;
-                    let mut cache_retry_done = false;
-                    let resp = loop {
-                        match provider.generate_content(req.clone()).await {
-                            Ok(r) => break Ok(r),
-                            Err(e) => {
-                                if !cache_retry_done && e.to_string().contains("403") {
-                                    cache_retry_done = true;
-                                    let mut guard = active_cache_name.lock().await;
-                                    *guard = None;
-                                    let new_name =
-                                        cache_manager.ensure_cache(Some("stale-cache")).await?;
-                                    *guard = Some(new_name.clone());
-                                    req.preloaded_context = Some(new_name);
-                                    continue;
-                                }
-                                break Err(e);
-                            }
-                        }
-                    };
-                    let reply = json!({ "type": "ai_response", "payload": resp? });
-                    stdin
-                        .write_all(serde_json::to_string(&reply)?.as_bytes())
-                        .await?;
-                    stdin.write_all(b"\n").await?;
-                    stdin.flush().await?;
-                } else if json_msg.get("patchset_id").is_some() {
-                    break;
-                }
-            }
-        }
-
-        assert_eq!(call_count.load(Ordering::SeqCst), 2);
-        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
-        child.wait().await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_cross_task_cache_refresh_coordination() -> Result<()> {
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        let refresh_count = Arc::new(AtomicU32::new(0));
-
-        struct MultiMockProvider {
-            refresh_count: Arc<AtomicU32>,
-        }
-        #[async_trait]
-        impl AiProvider for MultiMockProvider {
-            async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
-                if request.preloaded_context.as_deref() == Some("stale") {
-                    anyhow::bail!("403 Permission Denied: CachedContent not found");
-                }
-                Ok(AiResponse {
-                    content: Some("Ok".to_string()),
-                    thought: None,
-                    tool_calls: None,
-                    usage: None,
-                })
-            }
-            async fn create_context_cache(
-                &self,
-                _request: AiRequest,
-                _ttl: String,
-                _display_name: Option<String>,
-            ) -> Result<String> {
-                // Simulate slow refresh to increase race probability
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                self.refresh_count.fetch_add(1, Ordering::SeqCst);
-                Ok("fresh".to_string())
-            }
-            fn estimate_tokens(&self, _request: &AiRequest) -> usize {
-                0
-            }
-            fn get_capabilities(&self) -> ProviderCapabilities {
-                ProviderCapabilities {
-                    model_name: "m".to_string(),
-                    context_window_size: 10,
-                }
-            }
-        }
-
-        let provider = Arc::new(MultiMockProvider {
-            refresh_count: refresh_count.clone(),
-        });
-        let cache_manager = Arc::new(CacheManager::new(
-            PathBuf::from("."),
-            provider.clone(),
-            "m".to_string(),
-            "1h".to_string(),
-            None,
-        ));
-        let active_cache_name = Arc::new(Mutex::new(Some("stale".to_string())));
-
-        // Simulate two concurrent tasks both hitting 403
-        let mut handles = vec![];
-        for _ in 0..2 {
-            let p = provider.clone();
-            let cm = cache_manager.clone();
-            let acn = active_cache_name.clone();
-            handles.push(tokio::spawn(async move {
-                let mut req = AiRequest {
-                    system: None,
-                    messages: vec![],
-                    tools: None,
-                    temperature: None,
-                    preloaded_context: Some("stale".to_string()),
-                    response_format: None,
-                };
-
-                let mut retry = false;
-                loop {
-                    match p.generate_content(req.clone()).await {
-                        Ok(_) => break Ok::<(), anyhow::Error>(()),
-                        Err(e) => {
-                            if !retry && e.to_string().contains("403") {
-                                retry = true;
-                                let mut guard = acn.lock().await;
-                                let current = req.preloaded_context.clone();
-                                if let Some(active) = guard.as_ref()
-                                    && current.as_ref() != Some(active)
-                                {
-                                    // Already refreshed by another task!
-                                    req.preloaded_context = Some(active.clone());
-                                    drop(guard);
-                                    continue;
-                                }
-                                *guard = None;
-                                let new = cm.ensure_cache(current.as_deref()).await?;
-                                *guard = Some(new.clone());
-                                req.preloaded_context = Some(new);
-                                drop(guard);
-                                continue;
-                            }
-                            break Err(e);
-                        }
-                    }
-                }
-            }));
-        }
-
-        for h in handles {
-            h.await??;
-        }
-
-        // Critical assertion: Only ONE refresh call happened despite two failures
-        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_skip_ignored_files() -> Result<()> {
         let mut settings = Settings::new()?;
         settings.database.url = ":memory:".to_string();
@@ -2182,14 +1726,6 @@ echo '{"patchset_id": 1, "patches": []}'
         db.migrate().await?;
         let quota_manager = Arc::new(QuotaManager::new());
         let provider = Arc::new(MockProvider);
-        let cache_manager = Arc::new(CacheManager::new(
-            PathBuf::from("."),
-            provider.clone(),
-            "mock".to_string(),
-            "1h".to_string(),
-            None,
-        ));
-        let active_cache_name = Arc::new(Mutex::new(None));
 
         let ctx = ReviewContext {
             semaphore: Arc::new(Semaphore::new(1)),
@@ -2197,9 +1733,6 @@ echo '{"patchset_id": 1, "patches": []}'
             settings: settings.clone(),
             baseline_registry: Arc::new(BaselineRegistry::new(Path::new(".")).unwrap()),
             quota_manager,
-            cache_manager,
-            active_cache_name,
-            current_cache_name: None,
             target_review_count: 1,
             provider,
         };

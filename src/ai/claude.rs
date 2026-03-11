@@ -494,23 +494,6 @@ impl AiProvider for ClaudeClient {
     }
 
     // Optional caching methods - implement as no-ops for now
-    // Claude uses automatic caching, not explicit cache creation
-    async fn create_context_cache(
-        &self,
-        _request: AiRequest,
-        _ttl: String,
-        _display_name: Option<String>,
-    ) -> Result<String> {
-        bail!("Claude uses automatic caching, not explicit cache creation")
-    }
-
-    async fn delete_context_cache(&self, _name: &str) -> Result<()> {
-        bail!("Claude uses automatic caching, not explicit cache management")
-    }
-
-    async fn list_context_caches(&self) -> Result<Vec<(String, String)>> {
-        bail!("Claude uses automatic caching, not explicit cache management")
-    }
 }
 
 // --- StdioClaudeClient for IPC ---
@@ -574,22 +557,5 @@ impl AiProvider for StdioClaudeClient {
             model_name: "stdio-claude".to_string(),
             context_window_size: 200_000,
         }
-    }
-
-    async fn create_context_cache(
-        &self,
-        _request: AiRequest,
-        _ttl: String,
-        _display_name: Option<String>,
-    ) -> Result<String> {
-        bail!("Claude uses automatic caching, not explicit cache creation")
-    }
-
-    async fn delete_context_cache(&self, _name: &str) -> Result<()> {
-        bail!("Claude uses automatic caching, not explicit cache management")
-    }
-
-    async fn list_context_caches(&self) -> Result<Vec<(String, String)>> {
-        bail!("Claude uses automatic caching, not explicit cache management")
     }
 }

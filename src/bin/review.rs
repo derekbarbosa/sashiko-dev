@@ -56,10 +56,6 @@ struct Args {
     #[arg(long)]
     review_commit: Option<String>,
 
-    /// Resource name of the Gemini Context Cache to use (e.g. cachedContents/...).
-    #[arg(long)]
-    gemini_cache: Option<String>,
-
     /// If set, skip AI review but still apply patches for verification.
     #[arg(long)]
     no_ai: bool,
@@ -367,11 +363,8 @@ async fn main() -> Result<()> {
                         let provider = sashiko::ai::create_provider(&settings).expect("Failed to create AI provider");
 
                         // Enable read_prompt tool only if explicit caching is NOT used.
-                        let prompts_tool_path = if args.gemini_cache.is_none() {
-                            Some(args.prompts.clone())
-                        } else {
-                            None
-                        };
+                        let prompts_dir = PathBuf::from("third_party/prompts/kernel");
+                        let prompts_tool_path = Some(prompts_dir.join("tool.md"));
 
                         let tools = ToolBox::new(worktree.path.clone(), prompts_tool_path);
                         let prompts = PromptRegistry::new(args.prompts.clone());
@@ -392,8 +385,7 @@ async fn main() -> Result<()> {
                                 max_input_tokens: settings.ai.max_input_tokens,
                                 max_interactions: settings.ai.max_interactions,
                                 temperature: settings.ai.temperature,
-                                cache_name: args.gemini_cache.clone(),
-                                custom_prompt: args.custom_prompt.clone(),
+                                                                custom_prompt: args.custom_prompt.clone(),
                                 series_range,
                             },
                         );

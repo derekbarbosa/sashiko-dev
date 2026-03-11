@@ -142,78 +142,11 @@ pub struct UsageMetadata {
     pub extra: Option<std::collections::HashMap<String, Value>>,
 }
 
-// --- Caching API Types ---
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CachedContent {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<Content>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contents: Option<Vec<Content>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expire_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttl: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateCachedContentRequest {
-    pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<Content>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contents: Option<Vec<Content>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttl: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenerateContentWithCacheRequest {
-    pub cached_content: String, // Resource name
-    pub contents: Vec<Content>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub generation_config: Option<GenerationConfig>,
-}
-
 #[async_trait]
 pub trait GenAiClient: Send + Sync {
     async fn generate_content(
         &self,
         request: GenerateContentRequest,
-    ) -> Result<GenerateContentResponse>;
-
-    async fn create_cached_content(
-        &self,
-        request: CreateCachedContentRequest,
-    ) -> Result<CachedContent>;
-
-    async fn list_cached_contents(&self) -> Result<Vec<CachedContent>>;
-
-    async fn delete_cached_content(&self, name: &str) -> Result<()>;
-
-    async fn generate_content_with_cache(
-        &self,
-        request: GenerateContentWithCacheRequest,
     ) -> Result<GenerateContentResponse>;
 }
 
@@ -288,22 +221,6 @@ impl GeminiClient {
         self.post_request(&url, request).await
     }
 
-    pub async fn generate_content_with_cache_single(
-        &self,
-        request: &GenerateContentWithCacheRequest,
-    ) -> Result<GenerateContentResponse> {
-        tracing::info!("Sending Gemini request (cached)...");
-
-        // When using cached content, the URL model parameter is effectively ignored by the backend
-        // in favor of the 'cached_content' field, but we still need a valid endpoint.
-        // The documentation says: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-        let url = format!(
-            "{}/v1beta/models/{}:generateContent",
-            self.base_url, self.model
-        );
-        self.post_request(&url, request).await
-    }
-
     async fn post_request<T: Serialize>(
         &self,
         url: &str,
@@ -325,9 +242,8 @@ impl GeminiClient {
                 Ok(response) => {
                     if let Some(usage) = &response.usage_metadata {
                         tracing::info!(
-                            "Gemini response received. Tokens: in={}, cached={}, out={}",
+                            "Gemini response received. Tokens: in={}, out={}",
                             usage.prompt_token_count,
-                            usage.cached_content_token_count.unwrap_or(0),
                             usage.candidates_token_count.unwrap_or(0)
                         );
                     } else {
@@ -398,64 +314,6 @@ impl GenAiClient for GeminiClient {
     ) -> Result<GenerateContentResponse> {
         self.generate_content_single(&request).await
     }
-
-    async fn create_cached_content(
-        &self,
-        request: CreateCachedContentRequest,
-    ) -> Result<CachedContent> {
-        let url = format!("{}/v1beta/cachedContents", self.base_url);
-        let res = self.client.post(&url).json(&request).send().await?;
-
-        if res.status().is_success() {
-            let body = res.text().await?;
-            let content: CachedContent = serde_json::from_str(&body)?;
-            Ok(content)
-        } else {
-            let status = res.status();
-            let err = res.text().await?;
-            anyhow::bail!("Failed to create cached content ({}): {}", status, err);
-        }
-    }
-
-    async fn list_cached_contents(&self) -> Result<Vec<CachedContent>> {
-        let url = format!("{}/v1beta/cachedContents", self.base_url);
-        let res = self.client.get(&url).send().await?;
-
-        if res.status().is_success() {
-            let body = res.text().await?;
-            #[derive(Deserialize)]
-            struct ListResponse {
-                #[serde(rename = "cachedContents")]
-                cached_contents: Option<Vec<CachedContent>>,
-            }
-            let list: ListResponse = serde_json::from_str(&body)?;
-            Ok(list.cached_contents.unwrap_or_default())
-        } else {
-            let status = res.status();
-            let err = res.text().await?;
-            anyhow::bail!("Failed to list cached contents ({}): {}", status, err);
-        }
-    }
-
-    async fn delete_cached_content(&self, name: &str) -> Result<()> {
-        let url = format!("{}/v1beta/{}", self.base_url, name);
-        let res = self.client.delete(&url).send().await?;
-
-        if res.status().is_success() {
-            Ok(())
-        } else {
-            let status = res.status();
-            let err = res.text().await?;
-            anyhow::bail!("Failed to delete cached content ({}): {}", status, err);
-        }
-    }
-
-    async fn generate_content_with_cache(
-        &self,
-        request: GenerateContentWithCacheRequest,
-    ) -> Result<GenerateContentResponse> {
-        self.generate_content_with_cache_single(&request).await
-    }
 }
 
 pub struct StdioGeminiClient;
@@ -463,13 +321,8 @@ pub struct StdioGeminiClient;
 #[async_trait]
 impl AiProvider for StdioGeminiClient {
     async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
-        let type_str = if request.preloaded_context.is_some() {
-            "ai_request_with_cache"
-        } else {
-            "ai_request"
-        };
         let msg = json!({
-            "type": type_str,
+            "type": "ai_request",
             "payload": request
         });
         self.exec_stdio(msg).await
@@ -484,38 +337,6 @@ impl AiProvider for StdioGeminiClient {
             model_name: "stdio-gemini".to_string(),
             context_window_size: 1_000_000,
         }
-    }
-
-    async fn create_context_cache(
-        &self,
-        request: AiRequest,
-        ttl: String,
-        display_name: Option<String>,
-    ) -> Result<String> {
-        let msg = json!({
-            "type": "ai_create_cache",
-            "payload": {
-                "request": request,
-                "ttl": ttl,
-                "display_name": display_name,
-            }
-        });
-        let resp = self.exec_stdio(msg).await?;
-        resp.content
-            .ok_or_else(|| anyhow::anyhow!("Created cache has no name in response"))
-    }
-
-    async fn delete_context_cache(&self, name: &str) -> Result<()> {
-        let msg = json!({
-            "type": "ai_delete_cache",
-            "payload": name
-        });
-        self.exec_stdio(msg).await?;
-        Ok(())
-    }
-
-    async fn list_context_caches(&self) -> Result<Vec<(String, String)>> {
-        Ok(vec![])
     }
 }
 
@@ -559,64 +380,32 @@ impl StdioGeminiClient {
 fn translate_ai_request(request: AiRequest) -> Result<GenerateContentRequest> {
     let mut contents: Vec<Content> = Vec::new();
     let mut system_instruction = None;
-    let has_cache = request.preloaded_context.is_some();
 
     if let Some(sys_content) = request.system {
-        if has_cache {
-            contents.push(Content {
-                role: "user".to_string(),
-                parts: vec![Part::Text {
-                    text: sys_content,
-                    thought_signature: None,
-                    thought: false,
-                }],
-            });
-        } else {
-            system_instruction = Some(Content {
-                role: "user".to_string(),
-                parts: vec![Part::Text {
-                    text: sys_content,
-                    thought_signature: None,
-                    thought: false,
-                }],
-            });
-        }
+        system_instruction = Some(Content {
+            role: "user".to_string(),
+            parts: vec![Part::Text {
+                text: sys_content,
+                thought_signature: None,
+                thought: false,
+            }],
+        });
     }
 
     for msg in request.messages {
         match msg.role {
             AiRole::System => {
                 if let Some(content) = msg.content {
-                    if has_cache {
-                        // When using cache, Gemini API prohibits system_instruction.
-                        // We must send it as a 'user' message instead.
-                        let part = Part::Text {
-                            text: content,
-                            thought_signature: None,
-                            thought: false,
-                        };
-                        if let Some(last) = contents.last_mut()
-                            && last.role == "user"
-                        {
-                            last.parts.push(part);
-                            continue;
-                        }
-                        contents.push(Content {
-                            role: "user".to_string(),
-                            parts: vec![part],
+                    // Only set if not already set by request.system
+                    if system_instruction.is_none() {
+                        system_instruction = Some(Content {
+                            role: "user".to_string(), // role is ignored for system_instruction but required by struct
+                            parts: vec![Part::Text {
+                                text: content,
+                                thought_signature: None,
+                                thought: false,
+                            }],
                         });
-                    } else {
-                        // Only set if not already set by request.system
-                        if system_instruction.is_none() {
-                            system_instruction = Some(Content {
-                                role: "user".to_string(), // role is ignored for system_instruction but required by struct
-                                parts: vec![Part::Text {
-                                    text: content,
-                                    thought_signature: None,
-                                    thought: false,
-                                }],
-                            });
-                        }
                     }
                 }
             }
@@ -824,21 +613,9 @@ fn estimate_tokens_generic(request: &AiRequest) -> usize {
 #[async_trait]
 impl AiProvider for GeminiClient {
     async fn generate_content(&self, request: AiRequest) -> Result<AiResponse> {
-        if let Some(cache_name) = request.preloaded_context.clone() {
-            let gen_req = translate_ai_request(request)?;
-            let cached_req = GenerateContentWithCacheRequest {
-                cached_content: cache_name,
-                contents: gen_req.contents,
-                tools: None, // Tools are in the cache
-                generation_config: gen_req.generation_config,
-            };
-            let resp = GenAiClient::generate_content_with_cache(self, cached_req).await?;
-            translate_ai_response(resp)
-        } else {
-            let gen_req = translate_ai_request(request)?;
-            let resp = GenAiClient::generate_content(self, gen_req).await?;
-            translate_ai_response(resp)
-        }
+        let gen_req = translate_ai_request(request)?;
+        let resp = GenAiClient::generate_content(self, gen_req).await?;
+        translate_ai_response(resp)
     }
 
     fn estimate_tokens(&self, request: &AiRequest) -> usize {
@@ -850,50 +627,6 @@ impl AiProvider for GeminiClient {
             model_name: self.model.clone(),
             context_window_size: 1_000_000, // Gemini 1.5 Pro default
         }
-    }
-
-    async fn create_context_cache(
-        &self,
-        request: AiRequest,
-        ttl: String,
-        display_name: Option<String>,
-    ) -> Result<String> {
-        let gen_req = translate_ai_request(request)?;
-        let model_name = if self.model.starts_with("models/") {
-            self.model.clone()
-        } else {
-            format!("models/{}", self.model)
-        };
-
-        let cache_req = CreateCachedContentRequest {
-            model: model_name,
-            display_name,
-            system_instruction: gen_req.system_instruction,
-            contents: Some(gen_req.contents),
-            tools: gen_req.tools,
-            ttl: Some(ttl),
-        };
-
-        let res = GenAiClient::create_cached_content(self, cache_req).await?;
-        res.name
-            .ok_or_else(|| anyhow::anyhow!("Created cache has no name"))
-    }
-
-    async fn delete_context_cache(&self, name: &str) -> Result<()> {
-        GenAiClient::delete_cached_content(self, name).await
-    }
-
-    async fn list_context_caches(&self) -> Result<Vec<(String, String)>> {
-        let existing = GenAiClient::list_cached_contents(self).await?;
-        Ok(existing
-            .into_iter()
-            .map(|c| {
-                (
-                    c.display_name.unwrap_or_default(),
-                    c.name.unwrap_or_default(),
-                )
-            })
-            .collect())
     }
 }
 
@@ -926,7 +659,6 @@ mod tests {
             tools: None,
             temperature: Some(0.7),
             response_format: None,
-            preloaded_context: None,
         };
 
         let gemini_req = translate_ai_request(request)?;
@@ -972,7 +704,6 @@ mod tests {
             tools: None,
             temperature: None,
             response_format: None,
-            preloaded_context: None,
         };
 
         let gemini_req = translate_ai_request(request)?;
@@ -1055,7 +786,6 @@ mod tests {
             tools: None,
             temperature: None,
             response_format: None,
-            preloaded_context: None,
         };
 
         let gemini_req = translate_ai_request(request)?;
@@ -1094,7 +824,6 @@ mod tests {
             response_format: Some(AiResponseFormat::Json {
                 schema: Some(schema.clone()),
             }),
-            preloaded_context: None,
         };
 
         let gemini_req = translate_ai_request(request)?;
@@ -1148,7 +877,6 @@ mod tests {
             }]),
             temperature: None,
             response_format: None,
-            preloaded_context: None,
         };
 
         let gemini_req = translate_ai_request(request)?;
@@ -1209,7 +937,6 @@ mod tests {
             }]),
             temperature: None,
             response_format: None,
-            preloaded_context: None,
         };
 
         let tokens = estimate_tokens_generic(&request);

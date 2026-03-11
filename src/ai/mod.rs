@@ -105,9 +105,6 @@ pub struct AiRequest {
     /// Optional sampling temperature (0.0 to 1.0).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    /// Optional reference to pre-loaded context (e.g. Gemini Cache name).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub preloaded_context: Option<String>,
     /// Optional expected response format.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<AiResponseFormat>,
@@ -162,28 +159,6 @@ pub trait AiProvider: Send + Sync {
 
     /// Returns the capabilities and constraints of this provider.
     fn get_capabilities(&self) -> ProviderCapabilities;
-
-    /// Creates a persistent context cache from the given request.
-    /// Returns the resource name/ID of the created cache.
-    async fn create_context_cache(
-        &self,
-        _request: AiRequest,
-        _ttl: String,
-        _display_name: Option<String>,
-    ) -> Result<String> {
-        bail!("Context caching not supported by this provider")
-    }
-
-    /// Deletes a context cache.
-    async fn delete_context_cache(&self, _name: &str) -> Result<()> {
-        bail!("Context caching not supported by this provider")
-    }
-
-    /// Lists existing context caches.
-    /// Returns a list of (display_name, resource_name).
-    async fn list_context_caches(&self) -> Result<Vec<(String, String)>> {
-        Ok(vec![])
-    }
 }
 
 /// Creates an AI provider based on the application settings.
@@ -208,8 +183,6 @@ pub fn create_provider(settings: &Settings) -> Result<Arc<dyn AiProvider>> {
         p => bail!("Unsupported AI provider: {}", p),
     }
 }
-
-pub mod cache;
 pub mod claude;
 pub mod gemini;
 pub mod proxy;
@@ -235,7 +208,6 @@ mod tests {
             }],
             tools: None,
             temperature: Some(0.5),
-            preloaded_context: Some("cache-123".to_string()),
             response_format: Some(AiResponseFormat::Text),
         };
 
@@ -250,7 +222,6 @@ mod tests {
 
         assert_eq!(deserialized["type"], "ai_request");
         assert_eq!(deserialized["payload"]["temperature"], 0.5);
-        assert_eq!(deserialized["payload"]["preloaded_context"], "cache-123");
         assert_eq!(deserialized["payload"]["messages"][0]["role"], "user");
         assert_eq!(deserialized["payload"]["messages"][0]["content"], "Hello");
 
