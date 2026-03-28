@@ -134,9 +134,6 @@ impl PromptRegistry {
         // Subsystem Guidelines
         let subsystem_dir = self.base_dir.join("subsystem");
 
-        self.append_file(&mut content, &mut clean_files, "technical-patterns.md")
-            .await?;
-
         if subsystem_dir.exists() {
             self.append_directory(&mut content, &mut clean_files, &subsystem_dir, |name| {
                 if matches!(name, "README.md" | "subsystem-template.md" | "subsystem.md") {
@@ -205,7 +202,18 @@ You are an expert in C and Rust resource management within the Linux kernel. Ana
             5 => {
                 "# Stage 5. Locking and synchronization
 
-You are a concurrency expert reviewing Linux kernel locking mechanisms. Look for deadlocks, missed unlocks in error paths, sleeping in atomic context (e.g., calling sleeping functions while holding spinlocks, inside RCU read-side critical sections, or with interrupts disabled), and incorrect RCU usage. Investigate race conditions, lock ordering violations (AB-BA deadlocks), and thread-safety issues. Check for mutex lifecycle issues (e.g., double initialization, destroying a locked mutex, or failing to release/destroy on probe failure). Check if shared data is adequately protected across different contexts (process, softirq, hardirq). CRITICAL RCU RULE: Objects must be removed from data structures BEFORE calling call_rcu(), synchronize_rcu(), or kfree_rcu(). Flag any violations as a UAF. Ensure memory barriers are used correctly when lockless concurrency is involved."
+You are a world-class concurrency and locking expert auditing a Linux kernel patch.
+Carefully review the proposed patch for ANY locking, concurrency, or synchronization bugs.
+You MUST consider the following categories of issues and report any violations:
+1. Sleeping in atomic context: Are there any calls to `mutex_lock`, `kzalloc` with `GFP_KERNEL`, `msleep`, `cond_resched`, `flush_workqueue`, `synchronize_rcu`, or `cancel_work_sync` while holding a spinlock, rwlock, or within an RCU read-side critical section (`rcu_read_lock`)?
+2. Lock ordering and deadlocks: Are locks acquired in a different order than elsewhere? Does it acquire a mutex while holding another mutex that could cause AB-BA deadlocks? Are IRQs disabled (`spin_lock_irqsave`) when acquiring a lock that is used in hardirq context? Does it acquire a lock already held by a higher-level subsystem (e.g., ethtool)?
+3. Race conditions and lockless access: Are shared variables, list entries, or pointers accessed without holding the appropriate lock? Are there missing memory barriers (`smp_mb`, `smp_wmb`, `smp_rmb`) when lockless access is intended? Are there TOCTOU races where a state is checked outside a lock but relied upon inside?
+4. UAF / Locking Freed Memory: Are locks (`mutex_unlock`, `spin_unlock`) called on objects that have already been freed? Are works/timers destroyed before subsystems are unregistered, allowing new events to use freed works/timers? Is the protocol initialized flag set before private data is ready?
+5. RCU rules: Is `list_splice_init` or similar non-RCU-safe operations used on RCU-protected lists? Is `list_for_each_rcu` used without `rcu_read_lock`?
+6. Unprotected state modifications: Does the patch check state before acquiring the lock (e.g., checking power state before taking mutex)? Are hardware state, flags, or stats updated without proper protection?
+7. Sequence counters: Are stats accumulations directly inside a `u64_stats_fetch_retry` loop leading to double counting? Is it possible for an interrupt to read a sequence counter while the interrupted context is modifying it (deadlock)?
+8. Lock re-initialization: Does it re-initialize a lock that was already initialized, or destroy a lock on a failure path improperly?
+9. Missing locking: Is a port or file exposed to userspace before the driver/TTY linking is complete? Does a worker race with cleanup code leading to dropped/leaked frames?"
             }
             6 => {
                 "# Stage 6. Security audit
@@ -252,6 +260,8 @@ You are an expert kernel developer writing patches to fix bugs found during revi
         match stage {
             3 => {
                 self.append_file(&mut content, &mut clean_files, "callstack.md")
+                    .await?;
+                self.append_file(&mut content, &mut clean_files, "technical-patterns.md")
                     .await?;
             }
             8 => {
