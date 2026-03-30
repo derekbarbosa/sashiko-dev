@@ -17,6 +17,38 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct SubsystemMapping {
+    pub pattern: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct SubsystemsSettings {
+    #[serde(default)]
+    pub mapping: Vec<SubsystemMapping>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct ProjectSettings {
+    pub name: String,
+    pub description: String,
+    pub prompts_dir: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct ForgeSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    pub provider: Option<String>,
+    pub webhook_secret: Option<String>,
+    pub api_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct DatabaseSettings {
     pub url: String,
     pub token: String,
@@ -249,6 +281,11 @@ fn default_log_level() -> String {
 pub struct Settings {
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    pub project: ProjectSettings,
+    #[serde(default = "default_subsystems")]
+    pub subsystems: SubsystemsSettings,
+    #[serde(default = "default_forge")]
+    pub forge: ForgeSettings,
     pub database: DatabaseSettings,
     pub nntp: NntpSettings,
     pub smtp: Option<SmtpSettings>,
@@ -257,6 +294,19 @@ pub struct Settings {
     pub server: ServerSettings,
     pub git: GitSettings,
     pub review: ReviewSettings,
+}
+
+fn default_subsystems() -> SubsystemsSettings {
+    SubsystemsSettings { mapping: vec![] }
+}
+
+fn default_forge() -> ForgeSettings {
+    ForgeSettings {
+        enabled: false,
+        provider: None,
+        webhook_secret: None,
+        api_token: None,
+    }
 }
 
 impl Settings {
