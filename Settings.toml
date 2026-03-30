@@ -1,5 +1,23 @@
 log_level = "info"
 
+[project]
+name = "Sashiko (Linux Kernel)"
+description = "Sashiko is an agentic Linux kernel code review system. It monitors public mailing lists to thoroughly evaluate proposed Linux kernel changes."
+prompts_dir = "third_party/prompts/kernel"
+
+[forge]
+enabled = false
+
+[subsystems]
+mapping = [
+    { pattern = ".*linux-kernel@vger.kernel.org.*", name = "LKML" },
+    { pattern = ".*netdev@vger.kernel.org.*", name = "netdev" },
+    { pattern = ".*bpf@vger.kernel.org.*", name = "bpf" },
+    { pattern = ".*linux-usb@vger.kernel.org.*", name = "usb" },
+    { pattern = ".*linux-fsdevel@vger.kernel.org.*", name = "fsdevel" },
+    { pattern = ".*linux-mm@kvack.org.*", name = "linux-mm" }
+]
+
 [database]
 url = "sashiko.db"
 token = ""
@@ -10,18 +28,6 @@ track = ["linux-kernel"]
 [nntp]
 server = "nntp.lore.kernel.org"
 port = 119
-
-# [smtp]
-# **WARNING: BE VERY CAREFUL WHEN ENABLING EMAIL SENDING.**
-# Sashiko can easily generate and send a large volume of automated emails to
-# public mailing lists, potentially causing disruption or being marked as spam.
-# Ensure your filters and dry_run settings are correctly configured before use.
-# server = "smtp.example.com"
-# port = 587
-# username = "user@example.com"
-# password = "your_password"
-# sender_address = "sashiko@example.com"
-# dry_run = true
 
 [ai]
 provider = "gemini"
