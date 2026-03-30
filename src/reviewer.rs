@@ -1297,6 +1297,8 @@ async fn run_review_tool(
         baseline,
         "--worktree-dir",
         &settings.review.worktree_dir,
+        "--prompts",
+        &settings.project.prompts_dir,
         "--ai-provider",
         "stdio-gemini",
     ]);

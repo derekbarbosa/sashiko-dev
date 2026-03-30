@@ -122,6 +122,7 @@ impl<K: std::hash::Hash + Eq + Clone, V: Clone> AsyncMapCache<K, V> {
 }
 
 pub struct AppState {
+    pub settings: Arc<crate::settings::Settings>,
     pub db: Arc<Database>,
     pub sender: mpsc::Sender<Event>,
     pub fetch_sender: mpsc::Sender<FetchRequest>,
@@ -225,7 +226,7 @@ pub struct SubmitResponse {
 }
 
 pub async fn run_server(
-    settings: ServerSettings,
+    settings: Arc<crate::settings::Settings>,
     db: Arc<Database>,
     sender: mpsc::Sender<Event>,
     fetch_sender: mpsc::Sender<FetchRequest>,
@@ -234,10 +235,11 @@ pub async fn run_server(
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
+        read_only: settings.server.read_only,
+        settings: settings.clone(),
         db,
         sender,
         fetch_sender,
-        read_only: settings.read_only,
         allow_all_submit,
         smtp_enabled,
         dry_run,
@@ -252,6 +254,8 @@ pub async fn run_server(
     });
 
     let app = Router::new()
+        .route("/api/config", get(get_config))
+        .route("/api/webhook/github", post(github_webhook))
         .route("/api/lists", get(list_mailing_lists))
         .route("/api/patchsets", get(list_patchsets))
         .route("/api/messages", get(list_messages))
@@ -269,7 +273,7 @@ pub async fn run_server(
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], settings.server.port));
     info!("Web API listening on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
@@ -827,4 +831,92 @@ async fn rerun_patch(
         })?;
 
     Ok(Json(serde_json::json!({ "status": "accepted" })))
+}
+
+async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, StatusCode> {
+    Ok(Json(serde_json::json!({
+        "project_name": state.settings.project.name,
+        "project_description": state.settings.project.description,
+        "forge_enabled": state.settings.forge.enabled,
+    })))
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubWebhookPayload {
+    action: Option<String>,
+    number: Option<i64>,
+    pull_request: Option<GithubPullRequest>,
+    repository: Option<GithubRepository>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubPullRequest {
+    head: GithubBranch,
+    base: GithubBranch,
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubBranch {
+    sha: String,
+    repo: GithubRepository,
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubRepository {
+    clone_url: String,
+}
+
+async fn github_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.settings.forge.enabled {
+        error!("Webhook received but forge integration is disabled.");
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let event_type = headers
+        .get("x-github-event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if event_type != "pull_request" {
+        return Ok(Json(serde_json::json!({ "status": "ignored", "reason": "not a pull_request event" })));
+    }
+
+    let payload: GithubWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to parse GitHub webhook payload: {}", e);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    if payload.action.as_deref() != Some("opened") && payload.action.as_deref() != Some("synchronize") {
+         return Ok(Json(serde_json::json!({ "status": "ignored", "reason": "unhandled action" })));
+    }
+
+    if let (Some(pr), Some(repo), Some(number)) = (payload.pull_request, payload.repository, payload.number) {
+        let repo_url = repo.clone_url;
+        let base_sha = pr.base.sha;
+        let head_sha = pr.head.sha;
+
+        info!("GitHub PR #{} updated. Base: {}, Head: {}", number, base_sha, head_sha);
+
+        let req = FetchRequest {
+            repo_url: Some(repo_url),
+            commit_hash: format!("{}..{}", base_sha, head_sha),
+        };
+
+        if let Err(e) = state.fetch_sender.send(req).await {
+            error!("Failed to queue FetchRequest for PR {}: {}", number, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+
+        Ok(Json(serde_json::json!({ "status": "accepted" })))
+    } else {
+        error!("Invalid GitHub PR webhook payload structure.");
+        Err(StatusCode::BAD_REQUEST)
+    }
 }
