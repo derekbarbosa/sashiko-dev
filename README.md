@@ -18,7 +18,9 @@ Please, note that as with any other LLM-based tools, Sashiko's output is probabi
 ## Features
 
 - **Automated Ingestion**: Monitors mailing lists (using `lore.kernel.org`) for new patch submissions.
+- **Forge Webhooks**: Supports direct integration with GitHub and GitLab via generic webhooks, bypassing the mailing list workflow.
 - **Manual Ingestion**: Can ingest patches from a local git repository.
+- **Configurable Tuning**: Dynamic mapping of file paths or email addresses to specific subsystems.
 - **Self-contained**: Doesn't depend on 3rd-party tools and can work with various LLM providers (Gemini and Claude are currently supported).
 - **Web interface and CLI**: Provides a web interface and a CLI tool. Email support will be added soon.
 
@@ -74,12 +76,39 @@ Running an automated review system like Sashiko can be computationally expensive
 
 2.  **Configuration**:
     Copy `Settings.toml` to customize your configuration. The default `Settings.toml` includes sections for:
+    *   **Project**: The project name, description, and the directory where your custom prompts are stored.
+    *   **Forge**: Enable/disable webhook integrations for GitHub/GitLab pull requests.
+    *   **Subsystems**: Map specific regex patterns (file paths or emails) to subsystem names to trigger targeted prompts.
     *   **Database**: SQLite database path (`sashiko.db`).
-    *   **NNTP**: Server details and groups to monitor.
+    *   **NNTP**: Server details and groups to monitor (ignored if `forge.enabled = true`).
     *   **AI**: Provider and model selection.
     *   **Server**: API server host and port.
-    *   **Git**: Path to the reference kernel repository.
+    *   **Git**: Path to the reference kernel/project repository.
     *   **Review**: Concurrency and worktree settings.
+
+    ### Generic Repository Integration (GitHub/GitLab)
+    
+    Sashiko can be configured to review code for any repository using webhooks, disabling the default Linux Kernel mailing list behavior:
+
+    ```toml
+    [project]
+    name = "My Custom App"
+    description = "Sashiko review instance for my custom app."
+    prompts_dir = "third_party/prompts/my_app"
+
+    [forge]
+    enabled = true
+    provider = "github" # Webhooks will be processed at /api/webhook/github
+
+    [subsystems]
+    # Map file paths to subsystems for targeted prompt selection
+    mapping = [
+        { pattern = ".*src/api/.*", name = "API Team" },
+        { pattern = ".*src/db/.*", name = "DB Team" }
+    ]
+    ```
+    
+    *Note: Point your repository's webhook to `http://<your-sashiko-ip>:8080/api/webhook/github` and subscribe to **Pull Request** events.*
 
     ### Configuring the LLM Provider
 
