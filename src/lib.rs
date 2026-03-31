@@ -25,6 +25,7 @@ pub mod ingestor;
 pub mod inspector;
 pub mod nntp;
 pub mod patch;
+pub mod patchwork;
 pub mod reviewer;
 pub mod settings;
 pub mod utils;

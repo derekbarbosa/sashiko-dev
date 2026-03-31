@@ -9,6 +9,42 @@ pub enum Action {
 pub struct EmailRouter {}
 
 impl EmailRouter {
+    pub fn resolve_patchwork(
+        policy: &EmailPolicyConfig,
+        incoming_to: &[String],
+        incoming_cc: &[String],
+    ) -> Vec<crate::email_policy::PatchworkPolicy> {
+        let mut all_incoming: Vec<&String> = Vec::new();
+        for addr in incoming_to {
+            all_incoming.push(addr);
+        }
+        for addr in incoming_cc {
+            all_incoming.push(addr);
+        }
+
+        let mut matched_policies = Vec::new();
+
+        for sub_policy in policy.subsystems.values() {
+            let mut matched = false;
+            for list in &sub_policy.lists {
+                for incoming in &all_incoming {
+                    if incoming.to_lowercase().contains(&list.to_lowercase()) {
+                        matched = true;
+                    }
+                }
+            }
+            if matched {
+                matched_policies.push(sub_policy.patchwork.clone());
+            }
+        }
+
+        if matched_policies.is_empty() {
+            matched_policies.push(policy.defaults.patchwork.clone());
+        }
+
+        matched_policies.into_iter().filter(|p| p.enabled).collect()
+    }
+
     pub fn resolve_recipients(
         policy: &EmailPolicyConfig,
         incoming_to: &[String],
@@ -143,6 +179,7 @@ mod tests {
                 cc_maintainers: true,
                 mute_all: false,
                 cc: vec!["mm-bot@test.com".to_string()],
+                patchwork: Default::default(),
             },
         );
         subsystems.insert(
@@ -154,6 +191,7 @@ mod tests {
                 cc_maintainers: false,
                 mute_all: false,
                 cc: vec![],
+                patchwork: Default::default(),
             },
         );
         subsystems.insert(
@@ -165,9 +203,9 @@ mod tests {
                 cc_maintainers: true,
                 mute_all: true,
                 cc: vec![],
+                patchwork: Default::default(),
             },
         );
-
         EmailPolicyConfig {
             defaults: SubsystemPolicy {
                 lists: vec![],
@@ -176,6 +214,7 @@ mod tests {
                 cc_maintainers: true,
                 mute_all: false,
                 cc: vec![],
+                patchwork: Default::default(),
             },
             subsystems,
         }

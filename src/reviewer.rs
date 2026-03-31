@@ -1135,12 +1135,16 @@ impl Reviewer {
 
                                 if db_success
                                     && let Some(inline) = inline_review
-                                    && let Err(e) = Self::queue_email(
+                                    && let Err(e) = Self::queue_notifications(
                                         ctx,
                                         patch_id,
                                         input_payload,
                                         index,
                                         inline,
+                                        json_output["findings"]
+                                            .as_array()
+                                            .map(|a| a.len())
+                                            .unwrap_or(0),
                                     )
                                     .await
                                 {
@@ -1624,12 +1628,13 @@ async fn run_review_tool(
     }
 }
 impl Reviewer {
-    async fn queue_email(
+    async fn queue_notifications(
         ctx: &ReviewContext,
         patch_id: i64,
         input_payload: &Value,
         index: i64,
         inline_review: &str,
+        findings_count: usize,
     ) -> Result<()> {
         let sender_address = match &ctx.settings.smtp {
             Some(s) => s.sender_address.clone(),
@@ -1676,6 +1681,39 @@ impl Reviewer {
 
         let patch_author = msg_details.author.unwrap_or_default();
         let patch_subject = msg_details.subject.unwrap_or_default();
+
+        let target_url = format!("https://sashiko.dev/patch/{}", patch_id);
+
+        let patchwork_policies =
+            crate::email_router::EmailRouter::resolve_patchwork(&policy, &to_list, &cc_list);
+
+        let patchwork_status = if findings_count > 0 {
+            "warning"
+        } else {
+            "success"
+        };
+        let patchwork_desc = if findings_count > 0 {
+            format!("Sashiko AI review found {} issue(s)", findings_count)
+        } else {
+            "Sashiko AI review found no regressions".to_string()
+        };
+
+        for pw_policy in patchwork_policies {
+            let msg_id_owned = msg_id.to_string();
+            let status_owned = patchwork_status.to_string();
+            let desc_owned = patchwork_desc.clone();
+            let url_owned = target_url.clone();
+            tokio::spawn(async move {
+                crate::patchwork::post_patchwork_check(
+                    &pw_policy,
+                    &msg_id_owned,
+                    &status_owned,
+                    &desc_owned,
+                    &url_owned,
+                )
+                .await;
+            });
+        }
 
         let action = EmailRouter::resolve_recipients(
             &policy,

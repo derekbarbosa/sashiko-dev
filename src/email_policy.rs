@@ -3,6 +3,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct PatchworkPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    pub api_url: Option<String>,
+    pub token: Option<String>,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct EmailPolicyConfig {
     #[serde(default)]
@@ -25,6 +33,8 @@ pub struct SubsystemPolicy {
     pub mute_all: bool,
     #[serde(default)]
     pub cc: Vec<String>,
+    #[serde(default)]
+    pub patchwork: PatchworkPolicy,
 }
 
 impl EmailPolicyConfig {
@@ -76,6 +86,10 @@ mod tests {
             [subsystems.net]
             lists = ["netdev@vger.kernel.org"]
             mute_all = true
+
+            [subsystems.net.patchwork]
+            enabled = true
+            api_url = "https://patchwork.kernel.org/api/1.2"
         "#;
 
         let mut file = NamedTempFile::new().unwrap();
@@ -85,6 +99,7 @@ mod tests {
 
         assert!(!config.defaults.reply_all);
         assert!(config.defaults.reply_to_author);
+        assert!(!config.defaults.patchwork.enabled);
 
         let mm_policy = config.subsystems.get("mm").expect("mm subsystem missing");
         assert_eq!(
@@ -92,6 +107,7 @@ mod tests {
             vec!["linux-mm@kvack.org", "linux-mm@vger.kernel.org"]
         );
         assert!(mm_policy.reply_all);
+        assert!(!mm_policy.patchwork.enabled);
 
         let bpf_policy = config.subsystems.get("bpf").expect("bpf subsystem missing");
         assert!(!bpf_policy.reply_all);
@@ -100,6 +116,11 @@ mod tests {
 
         let net_policy = config.subsystems.get("net").expect("net subsystem missing");
         assert!(net_policy.mute_all);
+        assert!(net_policy.patchwork.enabled);
+        assert_eq!(
+            net_policy.patchwork.api_url.as_deref(),
+            Some("https://patchwork.kernel.org/api/1.2")
+        );
     }
 
     #[test]
