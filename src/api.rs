@@ -391,6 +391,8 @@ async fn submit_patch(
             let req = FetchRequest {
                 repo_url: repo,
                 commit_hash: sha,
+                mr_title: None,  // Could be added to submit API
+                mr_number: None,
             };
 
             if let Err(e) = state.fetch_sender.send(req).await {
@@ -994,6 +996,8 @@ async fn github_webhook(
         let req = FetchRequest {
             repo_url: Some(repo_url),
             commit_hash: format!("{}..{}", base_sha, head_sha),
+            mr_title: None,  // GitHub PRs could add this too
+            mr_number: None,
         };
 
         if let Err(e) = state.fetch_sender.send(req).await {
@@ -1020,6 +1024,7 @@ struct GitlabWebhookPayload {
 #[derive(Deserialize, Debug)]
 struct GitlabObjectAttributes {
     iid: Option<i64>,
+    title: Option<String>,
     action: Option<String>,
     #[allow(dead_code)]
     last_commit: Option<GitlabCommit>,
@@ -1140,12 +1145,16 @@ async fn gitlab_webhook(
     let base_sha = diff_refs.base_sha;
     let head_sha = diff_refs.head_sha;
 
+    let mr_title = attrs.title.clone();
+
     info!("GitLab MR !{} {} (action: {}). Repo: {}, Base: {}, Head: {}",
           mr_number, action, action, repo_url, base_sha, head_sha);
 
     let req = FetchRequest {
         repo_url: Some(repo_url),
         commit_hash: format!("{}..{}", base_sha, head_sha),
+        mr_title,
+        mr_number: Some(mr_number),
     };
 
     if let Err(e) = state.fetch_sender.send(req).await {
