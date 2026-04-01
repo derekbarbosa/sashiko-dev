@@ -48,6 +48,11 @@ For automatic reviews on every MR update:
 
 View reviews at: http://localhost:9080/
 
+Reviews for GitLab MRs will display as:
+- **Subject**: `!<MR_NUMBER>: <MR_TITLE>`
+- **Author**: Original commit author
+- **Parts**: Number of commits in the MR
+
 ## Troubleshooting
 
 | Issue | Solution |

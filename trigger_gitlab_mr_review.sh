@@ -25,6 +25,7 @@ mr_data=$(curl -s "${GITLAB_API}/projects/${GITLAB_PROJECT}/merge_requests/${MR_
 
 # Extract required fields
 iid=$(echo "$mr_data" | jq -r '.iid // empty')
+title=$(echo "$mr_data" | jq -r '.title // empty')
 base_sha=$(echo "$mr_data" | jq -r '.diff_refs.base_sha // empty')
 head_sha=$(echo "$mr_data" | jq -r '.diff_refs.head_sha // empty')
 source_branch=$(echo "$mr_data" | jq -r '.source_branch // empty')
@@ -50,7 +51,8 @@ if [ -z "$git_http_url" ]; then
     exit 1
 fi
 
-echo "MR !${iid}: ${source_branch} → ${target_branch} (${state})"
+echo "MR !${iid}: ${title}"
+echo "Branches: ${source_branch} → ${target_branch} (${state})"
 echo "Base SHA: ${base_sha}"
 echo "Head SHA: ${head_sha}"
 echo "Repo: ${git_http_url}"
@@ -63,6 +65,7 @@ read -r -d '' PAYLOAD <<EOF || true
   "event_type": "merge_request",
   "object_attributes": {
     "iid": ${iid},
+    "title": $(echo "$title" | jq -R .),
     "action": "open",
     "source_branch": "${source_branch}",
     "target_branch": "${target_branch}",

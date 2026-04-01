@@ -36,6 +36,7 @@ pub struct FetchAgent {
     repo_path: PathBuf,
     rx: mpsc::Receiver<FetchRequest>,
     main_tx: mpsc::Sender<Event>,
+    mr_metadata: HashMap<String, (Option<String>, Option<i64>)>, // commit_hash -> (mr_title, mr_number)
 }
 
 impl FetchAgent {
@@ -49,6 +50,7 @@ impl FetchAgent {
                 repo_path,
                 rx,
                 main_tx,
+                mr_metadata: HashMap::new(),
             },
             tx,
         )
@@ -62,6 +64,13 @@ impl FetchAgent {
         loop {
             tokio::select! {
                 Some(req) = self.rx.recv() => {
+                    // Store MR metadata if present
+                    if req.mr_title.is_some() || req.mr_number.is_some() {
+                        self.mr_metadata.insert(
+                            req.commit_hash.clone(),
+                            (req.mr_title.clone(), req.mr_number)
+                        );
+                    }
                     queue.entry(req.repo_url)
                         .or_default()
                         .insert(req.commit_hash);
@@ -246,7 +255,11 @@ impl FetchAgent {
 
                     // 3. Process each SHA
                     for (i, sha) in shas.iter().enumerate() {
-                        match self.extract_patch(sha, range, (i + 1) as u32, count).await {
+                        // Get MR metadata for this commit range
+                        let (mr_title, mr_number) = self.mr_metadata.get(range)
+                            .unwrap_or(&(None, None));
+
+                        match self.extract_patch(sha, range, (i + 1) as u32, count, mr_title.as_ref(), *mr_number).await {
                             Ok(mut event) => {
                                 if let Event::PatchSubmitted {
                                     ref mut message_id, ..
@@ -283,7 +296,11 @@ impl FetchAgent {
                         }
                     };
 
-                    match self.extract_patch(&full_sha, &commit_or_range, 1, 1).await {
+                    // Get MR metadata for this commit
+                    let (mr_title, mr_number) = self.mr_metadata.get(&commit_or_range)
+                        .unwrap_or(&(None, None));
+
+                    match self.extract_patch(&full_sha, &commit_or_range, 1, 1, mr_title.as_ref(), *mr_number).await {
                         Ok(mut event) => {
                             if let Event::PatchSubmitted {
                                 ref mut message_id, ..
@@ -469,6 +486,8 @@ impl FetchAgent {
         article_id: &str,
         index: u32,
         total: u32,
+        mr_title: Option<&String>,
+        mr_number: Option<i64>,
     ) -> Result<Event> {
         // Resolve parent to use as base_commit
         let parent_output = Command::new("git")
@@ -520,7 +539,14 @@ impl FetchAgent {
         let mut lines = header_part.lines();
         let author_name = lines.next().unwrap_or_default().trim();
         let author_email = lines.next().unwrap_or("unknown@localhost").trim();
-        let subject = lines.next().unwrap_or("No Subject").trim();
+        let commit_subject = lines.next().unwrap_or("No Subject").trim();
+
+        // Use MR title if provided, otherwise use commit subject
+        let subject = if let (Some(title), Some(number)) = (mr_title, mr_number) {
+            format!("!{}: {}", number, title)
+        } else {
+            commit_subject.to_string()
+        };
 
         // Body is the rest
         let body: Vec<&str> = lines.collect();
@@ -536,7 +562,7 @@ impl FetchAgent {
             group: "git-fetch".to_string(),
             article_id: article_id.to_string(),
             message_id: String::new(), // Set by caller
-            subject: subject.to_string(),
+            subject,
             author,
             message,
             diff,
@@ -613,7 +639,7 @@ mod tests {
             .await?;
         let head = String::from_utf8(output.stdout)?.trim().to_string();
 
-        let event = agent.extract_patch(&head, &head, 1, 1).await?;
+        let event = agent.extract_patch(&head, &head, 1, 1, None, None).await?;
 
         match event {
             Event::PatchSubmitted {
