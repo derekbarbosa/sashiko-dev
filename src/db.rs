@@ -2304,7 +2304,7 @@ impl Database {
                 "SELECT p.id, p.subject, p.status, p.to_recipients, p.cc_recipients,
                     p.author, p.date, p.cover_letter_message_id, p.thread_id,
                     p.total_parts, p.received_parts, p.failed_reason,
-                    p.model_name, p.prompts_git_hash, p.baseline_logs, p.baseline_id, p.provider
+                    p.model_name, p.prompts_git_hash, p.baseline_logs, p.baseline_id, p.provider, p.mr_url
                 FROM patchsets p
                 WHERE p.id = ?",
                 libsql::params![id],
@@ -2329,6 +2329,7 @@ impl Database {
             let baseline_logs: Option<String> = row.get(14).ok();
             let baseline_id: Option<i64> = row.get(15).ok();
             let provider: Option<String> = row.get(16).ok();
+            let mr_url: Option<String> = row.get(17).ok();
             // Fetch baseline details if needed
             let baseline = if let Some(bid) = baseline_id {
                 let mut browse = self
@@ -2503,7 +2504,8 @@ impl Database {
                 "prompts_git_hash": prompts_git_hash,
                 "baseline_logs": baseline_logs,
                 "baseline": baseline,
-                "provider": provider
+                "provider": provider,
+                "mr_url": mr_url
             })))
         } else {
             Ok(None)
