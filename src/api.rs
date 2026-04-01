@@ -15,7 +15,6 @@
 use crate::db::Database;
 use crate::events::Event;
 use crate::fetcher::FetchRequest;
-use crate::settings::ServerSettings;
 use axum::{
     Json, Router,
     extract::{ConnectInfo, Query, State},
@@ -259,6 +258,7 @@ pub async fn run_server(
     let app = Router::new()
         .route("/api/config", get(get_config))
         .route("/api/webhook/github", post(github_webhook))
+        .route("/api/webhook/gitlab", post(gitlab_webhook))
         .route("/api/lists", get(list_mailing_lists))
         .route("/api/patchsets", get(list_patchsets))
         .route("/api/messages", get(list_messages))
@@ -944,6 +944,7 @@ struct GithubPullRequest {
 #[derive(Deserialize, Debug)]
 struct GithubBranch {
     sha: String,
+    #[allow(dead_code)]
     repo: GithubRepository,
 }
 
@@ -1005,4 +1006,133 @@ async fn github_webhook(
         error!("Invalid GitHub PR webhook payload structure.");
         Err(StatusCode::BAD_REQUEST)
     }
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabWebhookPayload {
+    object_kind: Option<String>,
+    #[allow(dead_code)]
+    event_type: Option<String>,
+    object_attributes: Option<GitlabObjectAttributes>,
+    project: Option<GitlabProject>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabObjectAttributes {
+    iid: Option<i64>,
+    action: Option<String>,
+    #[allow(dead_code)]
+    last_commit: Option<GitlabCommit>,
+    diff_refs: Option<GitlabDiffRefs>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabCommit {
+    #[allow(dead_code)]
+    id: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabDiffRefs {
+    base_sha: String,
+    head_sha: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabProject {
+    git_http_url: String,
+}
+
+async fn gitlab_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !state.settings.forge.enabled {
+        error!("Webhook received but forge integration is disabled.");
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let event_type = headers
+        .get("x-gitlab-event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if event_type != "Merge Request Hook" {
+        return Ok(Json(serde_json::json!({
+            "status": "ignored",
+            "reason": "not a merge request event"
+        })));
+    }
+
+    let payload: GitlabWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to parse GitLab webhook payload: {}", e);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Verify it's a merge request event
+    if payload.object_kind.as_deref() != Some("merge_request") {
+        return Ok(Json(serde_json::json!({
+            "status": "ignored",
+            "reason": "not a merge_request object"
+        })));
+    }
+
+    let attrs = match payload.object_attributes {
+        Some(a) => a,
+        None => {
+            error!("GitLab webhook missing object_attributes");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    // Only handle open, update, and reopen actions
+    let action = attrs.action.as_deref().unwrap_or("");
+    if action != "open" && action != "update" && action != "reopen" {
+        return Ok(Json(serde_json::json!({
+            "status": "ignored",
+            "reason": format!("unhandled action: {}", action)
+        })));
+    }
+
+    let mr_number = attrs.iid.unwrap_or(0);
+
+    // Extract SHAs from diff_refs
+    let diff_refs = match attrs.diff_refs {
+        Some(d) => d,
+        None => {
+            error!("GitLab MR !{} missing diff_refs", mr_number);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    let project = match payload.project {
+        Some(p) => p,
+        None => {
+            error!("GitLab webhook missing project information");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    let repo_url = project.git_http_url;
+    let base_sha = diff_refs.base_sha;
+    let head_sha = diff_refs.head_sha;
+
+    info!("GitLab MR !{} {} (action: {}). Base: {}, Head: {}",
+          mr_number, action, action, base_sha, head_sha);
+
+    let req = FetchRequest {
+        repo_url: Some(repo_url),
+        commit_hash: format!("{}..{}", base_sha, head_sha),
+    };
+
+    if let Err(e) = state.fetch_sender.send(req).await {
+        error!("Failed to queue FetchRequest for MR !{}: {}", mr_number, e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(serde_json::json!({ "status": "accepted" })))
 }
