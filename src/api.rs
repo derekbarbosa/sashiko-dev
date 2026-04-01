@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -1040,7 +1040,11 @@ struct GitlabDiffRefs {
 
 #[derive(Deserialize, Debug)]
 struct GitlabProject {
-    git_http_url: String,
+    #[serde(alias = "git_http_url", alias = "http_url_to_repo")]
+    git_http_url: Option<String>,
+    #[serde(alias = "git_ssh_url", alias = "ssh_url_to_repo")]
+    git_ssh_url: Option<String>,
+    web_url: Option<String>,
 }
 
 async fn gitlab_webhook(
@@ -1063,6 +1067,11 @@ async fn gitlab_webhook(
             "status": "ignored",
             "reason": "not a merge request event"
         })));
+    }
+
+    // Debug: log the raw payload to see the actual structure
+    if let Ok(payload_str) = std::str::from_utf8(&body) {
+        debug!("GitLab webhook payload: {}", payload_str);
     }
 
     let payload: GitlabWebhookPayload = match serde_json::from_slice(&body) {
@@ -1117,12 +1126,22 @@ async fn gitlab_webhook(
         }
     };
 
-    let repo_url = project.git_http_url;
+    // Try multiple URL fields (GitLab webhooks vs API use different field names)
+    let repo_url = project.git_http_url
+        .or(project.git_ssh_url)
+        .or(project.web_url)
+        .unwrap_or_default();
+
+    if repo_url.is_empty() {
+        error!("GitLab MR !{} webhook missing repository URL in project object", mr_number);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let base_sha = diff_refs.base_sha;
     let head_sha = diff_refs.head_sha;
 
-    info!("GitLab MR !{} {} (action: {}). Base: {}, Head: {}",
-          mr_number, action, action, base_sha, head_sha);
+    info!("GitLab MR !{} {} (action: {}). Repo: {}, Base: {}, Head: {}",
+          mr_number, action, action, repo_url, base_sha, head_sha);
 
     let req = FetchRequest {
         repo_url: Some(repo_url),
