@@ -393,6 +393,7 @@ async fn submit_patch(
                 commit_hash: sha,
                 mr_title: None,  // Could be added to submit API
                 mr_number: None,
+                mr_url: None,
             };
 
             if let Err(e) = state.fetch_sender.send(req).await {
@@ -998,6 +999,7 @@ async fn github_webhook(
             commit_hash: format!("{}..{}", base_sha, head_sha),
             mr_title: None,  // GitHub PRs could add this too
             mr_number: None,
+            mr_url: None,
         };
 
         if let Err(e) = state.fetch_sender.send(req).await {
@@ -1131,6 +1133,13 @@ async fn gitlab_webhook(
         }
     };
 
+    // Construct MR URL from project web_url if available (before consuming it)
+    let mr_url = project.web_url.as_ref().map(|web_url| {
+        // web_url is like: https://gitlab.com/redhat/centos-stream/src/kernel/centos-stream-10
+        // MR URL is: https://gitlab.com/redhat/centos-stream/src/kernel/centos-stream-10/-/merge_requests/2320
+        format!("{}/-/merge_requests/{}", web_url, mr_number)
+    });
+
     // Try multiple URL fields (GitLab webhooks vs API use different field names)
     let repo_url = project.git_http_url
         .or(project.git_ssh_url)
@@ -1155,6 +1164,7 @@ async fn gitlab_webhook(
         commit_hash: format!("{}..{}", base_sha, head_sha),
         mr_title,
         mr_number: Some(mr_number),
+        mr_url,
     };
 
     if let Err(e) = state.fetch_sender.send(req).await {

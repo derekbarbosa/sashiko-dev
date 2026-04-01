@@ -56,6 +56,7 @@ pub struct PatchsetRow {
     pub prompts_git_hash: Option<String>,
     pub baseline_logs: Option<String>,
     pub provider: Option<String>,
+    pub mr_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -424,6 +425,7 @@ impl Database {
             .try_add_column("patchsets", "baseline_logs", "TEXT")
             .await;
         let _ = self.try_add_column("patchsets", "provider", "TEXT").await;
+        let _ = self.try_add_column("patchsets", "mr_url", "TEXT").await;
 
         let _ = self
             .conn
@@ -2196,6 +2198,7 @@ impl Database {
                 prompts_git_hash: None,
                 baseline_logs: None,
                 provider: None,
+                mr_url: None,
             });
         }
         Ok(patchsets)
@@ -2635,6 +2638,7 @@ impl Database {
                 prompts_git_hash: None,
                 baseline_logs: None,
                 provider: None,
+                mr_url: None,
             });
         }
         Ok(patchsets)

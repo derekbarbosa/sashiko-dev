@@ -36,6 +36,7 @@ pub enum Event {
         timestamp: i64,
         index: u32,
         total: u32,
+        mr_url: Option<String>,
     },
     RawMboxSubmitted {
         raw: String,
@@ -60,4 +61,5 @@ pub struct ParsedArticle {
     pub failed_error: Option<String>,
     pub skip_filters: Option<Vec<String>>,
     pub only_filters: Option<Vec<String>>,
+    pub mr_url: Option<String>,
 }
