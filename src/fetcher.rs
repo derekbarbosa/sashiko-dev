@@ -102,8 +102,24 @@ impl FetchAgent {
             );
 
             // Check existence first
+            // For ranges (base..head), we need to fetch both endpoints, not the range itself.
+            // Git ranges are NOT valid refspecs - we must fetch the individual SHAs.
+            let mut commits_to_check = Vec::new();
+            for commit_or_range in &commit_list {
+                if commit_or_range.contains("..") {
+                    // It's a range - split and check both base and head
+                    let parts: Vec<&str> = commit_or_range.split("..").collect();
+                    if parts.len() == 2 {
+                        commits_to_check.push(parts[0].to_string());
+                        commits_to_check.push(parts[1].to_string());
+                    }
+                } else {
+                    commits_to_check.push(commit_or_range.clone());
+                }
+            }
+
             let mut missing_commits = Vec::new();
-            for commit in &commit_list {
+            for commit in &commits_to_check {
                 if !self.is_present(commit).await {
                     missing_commits.push(commit.clone());
                 }
@@ -140,11 +156,11 @@ impl FetchAgent {
                 } else {
                     if let Err(e) = self.ensure_remote(&remote_name, &url).await {
                         error!("Failed to ensure remote {}: {}", url, e);
-                        for commit in &missing_commits {
+                        for commit_or_range in &commit_list {
                             let _ = self
                                 .main_tx
                                 .send(Event::IngestionFailed {
-                                    article_id: commit.clone(),
+                                    article_id: commit_or_range.clone(),
                                     error: format!("Failed to set up remote {}: {}", url, e),
                                 })
                                 .await;
@@ -161,11 +177,11 @@ impl FetchAgent {
                         // 2. Fallback: Fetch everything (heads)
                         if let Err(e) = self.fetch_all(&remote_name).await {
                             error!("Full fetch failed for {}: {}", url, e);
-                            for commit in &missing_commits {
+                            for commit_or_range in &commit_list {
                                 let _ = self
                                     .main_tx
                                     .send(Event::IngestionFailed {
-                                        article_id: commit.clone(),
+                                        article_id: commit_or_range.clone(),
                                         error: format!("Failed to fetch from {}: {}", url, e),
                                     })
                                     .await;
@@ -178,7 +194,7 @@ impl FetchAgent {
                 // Local repo, but commits are missing
                 warn!(
                     "Local repository missing commits: {:?}. Cannot fetch.",
-                    missing_commits
+                    commits_to_check
                 );
             }
 
