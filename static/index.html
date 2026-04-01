@@ -1936,6 +1936,15 @@
                     <div class="kv"><div class="label">Sashiko ver.:</div><div>${escapeHtml(promptsHash)}</div></div>
                 </div>
                 
+                ${data.mr_url ? `<div class="section">
+                    <h2>Merge Request</h2>
+                    <div style="padding: 12px; background: var(--card-bg); border-radius: 6px; border: 1px solid var(--border);">
+                        <a href="${escapeHtml(data.mr_url)}" target="_blank" rel="noopener noreferrer" style="color: var(--link); text-decoration: none; font-weight: 500;">
+                            ${escapeHtml(data.mr_url)} ↗
+                        </a>
+                    </div>
+                </div>` : ''}
+
                 ${threadHtml ? `<div class="section">
                     <h2>Thread</h2>
                     ${threadHtml}
