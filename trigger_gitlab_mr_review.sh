@@ -30,12 +30,23 @@ head_sha=$(echo "$mr_data" | jq -r '.diff_refs.head_sha // empty')
 source_branch=$(echo "$mr_data" | jq -r '.source_branch // empty')
 target_branch=$(echo "$mr_data" | jq -r '.target_branch // empty')
 state=$(echo "$mr_data" | jq -r '.state // empty')
-git_http_url=$(echo "$mr_data" | jq -r '.project.http_url_to_repo // empty')
+
+# Fetch project details to get repository URL
+echo "Fetching project details..."
+project_data=$(curl -s "${GITLAB_API}/projects/${GITLAB_PROJECT}")
+git_http_url=$(echo "$project_data" | jq -r '.http_url_to_repo // empty')
 
 if [ -z "$iid" ] || [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
     echo "Error: Could not fetch MR details. Check MR number and network connection."
     echo "API Response:"
     echo "$mr_data" | jq . 2>/dev/null || echo "$mr_data"
+    exit 1
+fi
+
+if [ -z "$git_http_url" ]; then
+    echo "Error: Could not fetch repository URL from project API."
+    echo "Project API Response:"
+    echo "$project_data" | jq . 2>/dev/null || echo "$project_data"
     exit 1
 fi
 
