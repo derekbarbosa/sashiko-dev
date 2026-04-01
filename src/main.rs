@@ -247,6 +247,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 skip_filters: None,
                                 only_filters: None,
                                 mr_url: None,
+                                mr_title: None,
+                                mr_number: None,
                             })
                             .await
                         {
@@ -266,6 +268,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         index,
                         total,
                         mr_url,
+                        mr_title,
+                        mr_number,
                     } => {
                         let root_msg_id = format!("{}@sashiko.local", article_id);
 
@@ -311,6 +315,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 skip_filters: None,
                                 only_filters: None,
                                 mr_url,
+                                mr_title,
+                                mr_number,
                             })
                             .await
                         {
@@ -371,6 +377,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             skip_filters: skip_subjects_clone,
                                             only_filters: only_subjects_clone,
                                             mr_url: None,
+                                            mr_title: None,
+                                            mr_number: None,
                                         })
                                         .await
                                     {
@@ -426,6 +434,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         skip_filters: None,
                                         only_filters: None,
                                         mr_url: None,
+                                        mr_title: None,
+                                        mr_number: None,
                                     })
                                     .await
                                 {
@@ -591,6 +601,8 @@ async fn process_parsed_article(
         skip_filters,
         only_filters,
         mr_url,
+        mr_title,
+        mr_number,
     } = article;
 
     // Handle ingestion failure
@@ -839,8 +851,14 @@ async fn process_parsed_article(
                 false,
             )
         } else {
+            // For MR-based submissions, prefix the patchset subject with MR number and title
+            let patchset_subject = if let (Some(title), Some(number)) = (&mr_title, mr_number) {
+                format!("!{}: {}", number, title)
+            } else {
+                metadata.subject.clone()
+            };
             (
-                metadata.subject.clone(),
+                patchset_subject,
                 metadata.author.clone(),
                 metadata.total,
                 !group.starts_with("git-import"),
