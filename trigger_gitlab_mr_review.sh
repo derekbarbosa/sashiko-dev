@@ -36,6 +36,7 @@ state=$(echo "$mr_data" | jq -r '.state // empty')
 echo "Fetching project details..."
 project_data=$(curl -s "${GITLAB_API}/projects/${GITLAB_PROJECT}")
 git_http_url=$(echo "$project_data" | jq -r '.http_url_to_repo // empty')
+web_url=$(echo "$project_data" | jq -r '.web_url // empty')
 
 if [ -z "$iid" ] || [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
     echo "Error: Could not fetch MR details. Check MR number and network connection."
@@ -56,6 +57,7 @@ echo "Branches: ${source_branch} → ${target_branch} (${state})"
 echo "Base SHA: ${base_sha}"
 echo "Head SHA: ${head_sha}"
 echo "Repo: ${git_http_url}"
+echo "Web URL: ${web_url}"
 echo "---"
 
 # Build webhook payload
@@ -78,7 +80,8 @@ read -r -d '' PAYLOAD <<EOF || true
     }
   },
   "project": {
-    "git_http_url": "${git_http_url}"
+    "git_http_url": "${git_http_url}",
+    "web_url": "${web_url}"
   }
 }
 EOF
