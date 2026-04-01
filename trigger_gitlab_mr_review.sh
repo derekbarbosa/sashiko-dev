@@ -1,21 +1,24 @@
 #!/bin/bash
 # Manually trigger a review for a specific GitLab MR
-# Usage: ./trigger_gitlab_mr_review.sh <MR_NUMBER>
+# Usage: ./trigger_gitlab_mr_review.sh <MR_NUMBER> [PROJECT]
+# PROJECT defaults to centos-stream-10 if not specified
 
 set -e
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <MR_NUMBER>"
+    echo "Usage: $0 <MR_NUMBER> [PROJECT]"
     echo "Example: $0 123"
+    echo "Example: $0 7995 centos-stream-9"
     exit 1
 fi
 
 MR_NUMBER=$1
+PROJECT="${2:-centos-stream-10}"  # Default to centos-stream-10
 SERVER="http://localhost:9080"
 WEBHOOK_URL="${SERVER}/api/webhook/gitlab"
 
 # GitLab project details
-GITLAB_PROJECT="redhat%2Fcentos-stream%2Fsrc%2Fkernel%2Fcentos-stream-10"
+GITLAB_PROJECT="redhat%2Fcentos-stream%2Fsrc%2Fkernel%2F${PROJECT}"
 GITLAB_API="https://gitlab.com/api/v4"
 
 echo "Fetching MR !${MR_NUMBER} details from GitLab..."
