@@ -1,0 +1,32 @@
+name: Pull Request Workflow
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-sob:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check Developer Certificate of Origin (S-O-B)
+        run: |
+          echo "Checking request to pull ${{ github.ref_name }} by @${{ github.actor }} into ${{ github.base_ref }}"
+          TARGET_BRANCH=${GITHUB_BASE_REF:-main}
+          git fetch origin $TARGET_BRANCH
+          MISSING_TAGS=$(git log origin/$TARGET_BRANCH..HEAD --no-merges --invert-grep --grep="^Signed-off-by: " --format="%h %s")
+          if [ -n "$MISSING_TAGS" ]; then
+            echo "ERROR: Missing Signed-off-by tag in the following commits:"
+            echo "$MISSING_TAGS"
+            exit 1
+          fi
+          echo "All commits are successfully signed off!"
+  lint:
+    needs: check-sob
+    uses: ./.github/workflows/linting.yml
+  run-tests:
+    needs: [check-sob, lint]
+    uses: ./.github/workflows/test-prs.yml
+
