@@ -2912,14 +2912,16 @@ impl Database {
     }
 
     pub async fn lock_pending_email(&self) -> Result<Option<EmailOutboxRow>> {
-        self.begin_transaction().await?;
+        let now = chrono::Utc::now().timestamp();
         let mut rows = self.conn.query(
-            "SELECT id, patch_id, status, to_addresses, cc_addresses, subject, in_reply_to, references_hdr, body, locked_at, error_log, created_at
-             FROM email_outbox WHERE status = 'Pending' LIMIT 1",
-            ()
+            "UPDATE email_outbox 
+             SET status = 'Sending', locked_at = ? 
+             WHERE id = (SELECT id FROM email_outbox WHERE status = 'Pending' LIMIT 1)
+             RETURNING id, patch_id, status, to_addresses, cc_addresses, subject, in_reply_to, references_hdr, body, locked_at, error_log, created_at",
+            libsql::params![now]
         ).await?;
 
-        let row = if let Ok(Some(row)) = rows.next().await {
+        if let Ok(Some(row)) = rows.next().await {
             let id: i64 = row.get(0)?;
             let patch_id: i64 = row.get(1)?;
             let status: String = row.get(2)?;
@@ -2933,15 +2935,7 @@ impl Database {
             let error_log: Option<String> = row.get(10).ok();
             let created_at: i64 = row.get(11)?;
 
-            let now = chrono::Utc::now().timestamp();
-            self.conn
-                .execute(
-                    "UPDATE email_outbox SET status = 'Sending', locked_at = ? WHERE id = ?",
-                    libsql::params![now, id],
-                )
-                .await?;
-
-            Some(EmailOutboxRow {
+            Ok(Some(EmailOutboxRow {
                 id,
                 patch_id,
                 status,
@@ -2954,13 +2948,10 @@ impl Database {
                 locked_at,
                 error_log,
                 created_at,
-            })
+            }))
         } else {
-            None
-        };
-
-        self.commit_transaction().await?;
-        Ok(row)
+            Ok(None)
+        }
     }
 
     pub async fn mark_email_sent(&self, id: i64) -> Result<()> {
