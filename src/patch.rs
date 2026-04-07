@@ -68,9 +68,9 @@ pub fn parse_email(raw_email: &[u8]) -> Result<(PatchsetMetadata, Option<Patch>)
             } else {
                 address
             };
-            format!("{} <{}>", n, addr)
+            format!("\"{}\" <{}>", n.replace("\"", "\\\""), addr)
         })
-        .unwrap_or_else(|| "Unknown <unknown@localhost>".to_string());
+        .unwrap_or_else(|| "\"Unknown\" <unknown@localhost>".to_string());
 
     let date = message.date().map(|d| d.to_timestamp()).unwrap_or(0);
 
@@ -387,12 +387,12 @@ mod tests {
         let raw =
             b"Message-ID: <123>\r\nFrom: Test User <test@example.com>\r\nSubject: Test\r\n\r\nBody";
         let (meta, _) = parse_email(raw).unwrap();
-        assert_eq!(meta.author, "Test User <test@example.com>");
+        assert_eq!(meta.author, "\"Test User\" <test@example.com>");
 
         let raw_no_name =
             b"Message-ID: <456>\r\nFrom: test2@example.com\r\nSubject: Test\r\n\r\nBody";
         let (meta2, _) = parse_email(raw_no_name).unwrap();
-        assert_eq!(meta2.author, "Unknown <test2@example.com>");
+        assert_eq!(meta2.author, "\"Unknown\" <test2@example.com>");
     }
 
     #[test]
