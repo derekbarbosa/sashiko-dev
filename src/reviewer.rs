@@ -1826,14 +1826,15 @@ impl Reviewer {
                         let problem = f
                             .get("problem")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown issue");
+                            .unwrap_or("Unknown issue")
+                            .trim();
                         let severity = f
                             .get("severity")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown");
                         header.push_str(&format!("- [{}] {}\n", severity, problem));
                     }
-                    header.push_str("\n--\n\n");
+                    header.push_str("--\n\n");
                 }
 
                 let mut footer = String::new();
