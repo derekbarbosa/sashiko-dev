@@ -30,3 +30,7 @@ lists = ["bpf@vger.kernel.org"]
 reply_to_author = true
 cc = ["bpf@vger.kernel.org"]
 
+[subsystems.damon]
+lists = ["damon@lists.linux.dev"]
+reply_to_author = true
+cc = ["damon@lists.linux.dev"]
