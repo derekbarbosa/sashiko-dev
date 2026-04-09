@@ -1,5 +1,5 @@
 name: Linting Workflow
-# Lint Rust source code, yaml, and toml files
+# Lint Rust source code and yaml files
 on:
   workflow_call
 
@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
       - name: Run cargo-clippy
         run: cargo clippy --all-targets --all-features --  -D warnings
       - name: Run cargo-fmt
