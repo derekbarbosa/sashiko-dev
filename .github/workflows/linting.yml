@@ -28,6 +28,20 @@ jobs:
       - name: Setup Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Run cargo-clippy
-        run: cargo clippy --all-targets --all-features --  -D warnings
+        run: cargo clippy --all-targets --all-features --release --  -D warnings
       - name: Run cargo-fmt
         run: cargo fmt --all -- --check
+      - name: Build Release Binaries
+        run: cargo build --release
+      - name: Upload Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            target/release/sashiko
+            target/release/sashiko-cli
+            target/release/benchmark
+            target/release/ingest_benchmark
+            target/release/review
+          if-no-files-found: warn
+          retention-days: 7
