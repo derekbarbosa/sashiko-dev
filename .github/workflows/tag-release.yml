@@ -41,13 +41,14 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@v2
       - name: Setup Smoke Test Environment
         run: |
           chmod +x ./benchmarks/setup_smoke.sh
           ./benchmarks/setup_smoke.sh
+      - name: Setup Server Environment
+        run: |
+          cargo run  -- --no-ai &
       - name: Run Smoke Tests (Benchmark Mock Environment)
         run: |
-          cargo run --release --bin benchmark -- \
-            --file ./benchmarks/benchmark_smoke.json
+          cargo run --release --bin benchmark  -- \
+          --file ./benchmarks/benchmark_tiny.json
