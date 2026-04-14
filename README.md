@@ -80,6 +80,7 @@ Running an automated review system like Sashiko can be computationally expensive
     *   **Server**: API server host and port.
     *   **Git**: Path to the reference kernel repository.
     *   **Review**: Concurrency and worktree settings.
+    *   **Tools**: Configure which AI tools are enabled (optional). See [docs/TOOLS.md](docs/TOOLS.md) for details.
 
     ### Configuring the LLM Provider
 
