@@ -385,7 +385,7 @@ async fn main() -> Result<()> {
 
                         // Use settings if available, otherwise fall back to args.prompts
                         let prompts = if settings.prompts.is_some() {
-                            PromptRegistry::with_settings(args.prompts.clone(), settings.prompts.as_ref())
+                            PromptRegistry::with_settings(prompts_dir.clone(), settings.prompts.as_ref())
                                 .await
                                 .expect("Failed to load prompts with settings")
                         } else {
