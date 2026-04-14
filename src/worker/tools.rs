@@ -31,6 +31,7 @@ use tokio::process::Command;
 pub struct ToolBox {
     worktree_path: PathBuf,
     prompts_path: Option<PathBuf>,
+    enabled_tools: Option<Vec<String>>,
 }
 
 impl ToolBox {
@@ -38,6 +39,56 @@ impl ToolBox {
         Self {
             worktree_path,
             prompts_path,
+            enabled_tools: None,
+        }
+    }
+
+    /// Create a new ToolBox with tool filtering configuration.
+    pub fn with_config(
+        worktree_path: PathBuf,
+        prompts_path: Option<PathBuf>,
+        tools_config: Option<&crate::settings::ToolsSettings>,
+    ) -> Self {
+        let enabled_tools = tools_config.map(|config| {
+            // If enabled list is specified (whitelist mode), use it
+            if !config.enabled.is_empty() {
+                // Filter out disabled tools
+                config
+                    .enabled
+                    .iter()
+                    .filter(|name| !config.disabled.contains(name))
+                    .cloned()
+                    .collect()
+            } else {
+                // If no enabled list, get all built-in tools and filter disabled
+                let all_tools = vec![
+                    "read_files",
+                    "git_blame",
+                    "git_diff",
+                    "git_show",
+                    "git_log",
+                    "git_status",
+                    "git_checkout",
+                    "git_branch",
+                    "git_tag",
+                    "list_dir",
+                    "search_file_content",
+                    "find_files",
+                    "TodoWrite",
+                    "read_prompt",
+                ];
+                all_tools
+                    .into_iter()
+                    .filter(|name| !config.disabled.contains(&name.to_string()))
+                    .map(|s| s.to_string())
+                    .collect()
+            }
+        });
+
+        Self {
+            worktree_path,
+            prompts_path,
+            enabled_tools,
         }
     }
 
@@ -58,6 +109,14 @@ impl ToolBox {
                     parameters: t.parameters,
                 })
                 .collect(),
+        }
+    }
+
+    /// Check if a tool is enabled based on configuration.
+    fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        match &self.enabled_tools {
+            Some(enabled) => enabled.contains(&tool_name.to_string()),
+            None => true, // All tools enabled by default
         }
     }
 
@@ -224,7 +283,7 @@ impl ToolBox {
             },
         ];
 
-        if self.prompts_path.is_some() {
+        if self.prompts_path.is_some() && self.is_tool_enabled("read_prompt") {
             decls.push(AiTool {
                 name: "read_prompt".to_string(),
                 description: "Read a specific prompt file from the prompt registry (e.g., 'mm.md', 'locking.md').".to_string(),
@@ -238,11 +297,21 @@ impl ToolBox {
             });
         }
 
+        // Filter declarations based on enabled_tools configuration
         decls
+            .into_iter()
+            .filter(|tool| self.is_tool_enabled(&tool.name))
+            .collect()
     }
 
     pub async fn call(&self, name: &str, args: Value) -> Result<Value> {
         let name_normalized = name.trim().to_lowercase();
+
+        // Check if tool is enabled
+        if !self.is_tool_enabled(&name_normalized) {
+            return Err(anyhow!("Tool '{}' is not enabled", name));
+        }
+
         match name_normalized.as_str() {
             "read_files" => self.read_files(args).await,
             "git_blame" => self.git_blame(args).await,
@@ -910,6 +979,158 @@ mod tests {
         let result = toolbox.call("git_tag", json!({})).await?;
         let content = result["content"].as_str().unwrap();
         assert!(content.contains("v1.0"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_whitelist() -> Result<()> {
+        use crate::settings::ToolsSettings;
+
+        let dir = tempdir()?;
+        let config = ToolsSettings {
+            enabled: vec!["read_files".to_string(), "git_diff".to_string()],
+            disabled: vec![],
+        };
+
+        let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
+        let decls = toolbox.get_declarations_generic();
+
+        // Should only have 2 tools
+        assert_eq!(decls.len(), 2);
+        assert!(decls.iter().any(|t| t.name == "read_files"));
+        assert!(decls.iter().any(|t| t.name == "git_diff"));
+
+        // Other tools should not be present
+        assert!(!decls.iter().any(|t| t.name == "git_log"));
+        assert!(!decls.iter().any(|t| t.name == "TodoWrite"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_blacklist() -> Result<()> {
+        use crate::settings::ToolsSettings;
+
+        let dir = tempdir()?;
+        let config = ToolsSettings {
+            enabled: vec![],
+            disabled: vec!["git_checkout".to_string(), "TodoWrite".to_string()],
+        };
+
+        let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
+        let decls = toolbox.get_declarations_generic();
+
+        // Should have all tools except the disabled ones
+        assert!(decls.len() > 10); // Should have most tools
+        assert!(!decls.iter().any(|t| t.name == "git_checkout"));
+        assert!(!decls.iter().any(|t| t.name == "TodoWrite"));
+
+        // Other tools should be present
+        assert!(decls.iter().any(|t| t.name == "read_files"));
+        assert!(decls.iter().any(|t| t.name == "git_diff"));
+        assert!(decls.iter().any(|t| t.name == "git_log"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_combined() -> Result<()> {
+        use crate::settings::ToolsSettings;
+
+        let dir = tempdir()?;
+        let config = ToolsSettings {
+            enabled: vec![
+                "read_files".to_string(),
+                "git_diff".to_string(),
+                "git_checkout".to_string(),
+            ],
+            disabled: vec!["git_checkout".to_string()], // Takes precedence
+        };
+
+        let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
+        let decls = toolbox.get_declarations_generic();
+
+        // Should only have 2 tools (git_checkout filtered by disabled)
+        assert_eq!(decls.len(), 2);
+        assert!(decls.iter().any(|t| t.name == "read_files"));
+        assert!(decls.iter().any(|t| t.name == "git_diff"));
+        assert!(!decls.iter().any(|t| t.name == "git_checkout"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_call_disabled() -> Result<()> {
+        use crate::settings::ToolsSettings;
+
+        let dir = tempdir()?;
+        let config = ToolsSettings {
+            enabled: vec!["read_files".to_string()],
+            disabled: vec![],
+        };
+
+        let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
+
+        // Calling a disabled tool should fail
+        let args = json!({
+            "args": ["--oneline"]
+        });
+        let result = toolbox.call("git_log", args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not enabled"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_default_all_enabled() -> Result<()> {
+        let dir = tempdir()?;
+        // No config means all tools enabled
+        let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, None);
+        let decls = toolbox.get_declarations_generic();
+
+        // Should have all built-in tools (13 tools, read_prompt excluded without prompts_path)
+        assert_eq!(decls.len(), 13);
+        assert!(decls.iter().any(|t| t.name == "read_files"));
+        assert!(decls.iter().any(|t| t.name == "git_diff"));
+        assert!(decls.iter().any(|t| t.name == "git_log"));
+        assert!(decls.iter().any(|t| t.name == "TodoWrite"));
+        assert!(decls.iter().any(|t| t.name == "git_checkout"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_tool_filtering_read_prompt_conditional() -> Result<()> {
+        use crate::settings::ToolsSettings;
+
+        let dir = tempdir()?;
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts_dir)?;
+
+        // Whitelist including read_prompt
+        let config = ToolsSettings {
+            enabled: vec!["read_files".to_string(), "read_prompt".to_string()],
+            disabled: vec![],
+        };
+
+        // With prompts_path, read_prompt should be available
+        let toolbox = ToolBox::with_config(
+            dir.path().to_path_buf(),
+            Some(prompts_dir.clone()),
+            Some(&config),
+        );
+        let decls = toolbox.get_declarations_generic();
+        assert_eq!(decls.len(), 2);
+        assert!(decls.iter().any(|t| t.name == "read_prompt"));
+
+        // Without prompts_path, read_prompt should not be available even if enabled
+        let toolbox_no_prompts =
+            ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
+        let decls_no_prompts = toolbox_no_prompts.get_declarations_generic();
+        assert_eq!(decls_no_prompts.len(), 1);
+        assert!(!decls_no_prompts.iter().any(|t| t.name == "read_prompt"));
 
         Ok(())
     }

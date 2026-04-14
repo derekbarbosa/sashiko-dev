@@ -377,7 +377,11 @@ async fn main() -> Result<()> {
                         let prompts_dir = PathBuf::from("third_party/prompts/kernel");
                         let prompts_tool_path = Some(prompts_dir.join("tool.md"));
 
-                        let tools = ToolBox::new(worktree.path.clone(), prompts_tool_path);
+                        let tools = ToolBox::with_config(
+                            worktree.path.clone(),
+                            prompts_tool_path,
+                            settings.tools.as_ref(),
+                        );
                         let prompts = PromptRegistry::new(args.prompts.clone());
 
                         // Calculate series range (baseline..last_patch)
