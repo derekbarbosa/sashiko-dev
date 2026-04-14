@@ -264,6 +264,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         timestamp,
                         index,
                         total,
+                        mr_url: _,
+                        mr_title: _,
+                        mr_number: _,
                     } => {
                         let root_msg_id = format!("{}@sashiko.local", article_id);
 

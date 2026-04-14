@@ -268,6 +268,8 @@ pub async fn run_server(
         .route("/api/submit", post(submit_patch))
         .route("/api/patchset/rerun", post(rerun_patchset))
         .route("/api/patch/rerun", post(rerun_patch))
+        .route("/api/webhook/github", post(github_webhook))
+        .route("/api/webhook/gitlab", post(gitlab_webhook))
         .route("/", get_service(ServeFile::new("static/index.html")))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state);
@@ -377,6 +379,9 @@ async fn submit_patch(
                     &format!("Fetching {} from {}...", &sha, repo_display),
                     skip_subjects.as_ref(),
                     only_subjects.as_ref(),
+                    None,
+                    None,
+                    None,
                 )
                 .await
             {
@@ -387,6 +392,9 @@ async fn submit_patch(
             let req = FetchRequest {
                 repo_url: repo,
                 commit_hash: sha,
+                mr_url: None,
+                mr_title: None,
+                mr_number: None,
             };
 
             if let Err(e) = state.fetch_sender.send(req).await {
@@ -413,6 +421,9 @@ async fn submit_patch(
                 .create_fetching_patchset(
                     &clean_msgid,
                     &format!("Fetching thread {}...", clean_msgid),
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                 )
@@ -957,4 +968,196 @@ async fn rerun_patch(
         })?;
 
     Ok(Json(serde_json::json!({ "status": "accepted" })))
+}
+
+// GitHub webhook payload structures
+#[derive(Deserialize, Debug)]
+struct GithubPullRequest {
+    pub title: Option<String>,
+    pub html_url: Option<String>,
+    pub number: Option<i64>,
+    pub base: Option<GithubRef>,
+    pub head: Option<GithubRef>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubRef {
+    pub sha: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GithubWebhookPayload {
+    pub action: Option<String>,
+    pub pull_request: Option<GithubPullRequest>,
+}
+
+// GitLab webhook payload structures
+#[derive(Deserialize, Debug)]
+struct GitlabObjectAttributes {
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub iid: Option<i64>,
+    pub last_commit: Option<GitlabCommit>,
+    #[allow(dead_code)]
+    pub target_branch: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabCommit {
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitlabWebhookPayload {
+    pub object_kind: Option<String>,
+    pub object_attributes: Option<GitlabObjectAttributes>,
+}
+
+async fn github_webhook(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<GithubWebhookPayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    if !state.allow_all_submit && !addr.ip().is_loopback() {
+        info!("Refused GitHub webhook from non-localhost: {}", addr);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    info!("Received GitHub webhook: action={:?}", payload.action);
+
+    let pr = payload.pull_request.ok_or(StatusCode::BAD_REQUEST)?;
+
+    let _base_sha = pr.base.and_then(|b| b.sha).ok_or(StatusCode::BAD_REQUEST)?;
+
+    let head_sha = pr.head.and_then(|h| h.sha).ok_or(StatusCode::BAD_REQUEST)?;
+
+    let mr_title = pr.title.clone();
+    let mr_url = pr.html_url.clone();
+    let mr_number = pr.number;
+
+    info!(
+        "GitHub PR #{}: {} - {}",
+        mr_number.unwrap_or(0),
+        mr_title.as_deref().unwrap_or("(no title)"),
+        mr_url.as_deref().unwrap_or("(no url)")
+    );
+
+    // Create a placeholder patchset record
+    let default_subject = format!("GitHub PR #{}", mr_number.unwrap_or(0));
+    let subject = mr_title.as_deref().unwrap_or(&default_subject);
+
+    if let Err(e) = state
+        .db
+        .create_fetching_patchset(
+            &head_sha,
+            &format!("Fetching GitHub PR: {}", subject),
+            None,
+            None,
+            mr_url.as_deref(),
+            Some(subject),
+            mr_number,
+        )
+        .await
+    {
+        error!("Failed to create placeholder patchset: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Create FetchRequest with metadata
+    let req = FetchRequest {
+        repo_url: None, // GitHub webhooks typically don't need explicit repo URL
+        commit_hash: head_sha,
+        mr_url,
+        mr_title,
+        mr_number,
+    };
+
+    if let Err(e) = state.fetch_sender.send(req).await {
+        error!("Failed to send GitHub fetch request to queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(serde_json::json!({
+        "status": "accepted",
+        "message": "GitHub PR queued for review"
+    })))
+}
+
+async fn gitlab_webhook(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<GitlabWebhookPayload>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    if !state.allow_all_submit && !addr.ip().is_loopback() {
+        info!("Refused GitLab webhook from non-localhost: {}", addr);
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    info!("Received GitLab webhook: kind={:?}", payload.object_kind);
+
+    let attrs = payload.object_attributes.ok_or(StatusCode::BAD_REQUEST)?;
+
+    let commit_sha = attrs
+        .last_commit
+        .and_then(|c| c.id)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let mr_title = attrs.title.clone();
+    let mr_url = attrs.url.clone();
+    let mr_number = attrs.iid;
+
+    info!(
+        "GitLab MR !{}: {} - {}",
+        mr_number.unwrap_or(0),
+        mr_title.as_deref().unwrap_or("(no title)"),
+        mr_url.as_deref().unwrap_or("(no url)")
+    );
+
+    // Create a placeholder patchset record
+    let default_subject = format!("GitLab MR !{}", mr_number.unwrap_or(0));
+    let subject = mr_title.as_deref().unwrap_or(&default_subject);
+
+    if let Err(e) = state
+        .db
+        .create_fetching_patchset(
+            &commit_sha,
+            &format!("Fetching GitLab MR: {}", subject),
+            None,
+            None,
+            mr_url.as_deref(),
+            Some(subject),
+            mr_number,
+        )
+        .await
+    {
+        error!("Failed to create placeholder patchset: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // Create FetchRequest with metadata
+    let req = FetchRequest {
+        repo_url: None, // GitLab webhooks typically don't need explicit repo URL
+        commit_hash: commit_sha,
+        mr_url,
+        mr_title,
+        mr_number,
+    };
+
+    if let Err(e) = state.fetch_sender.send(req).await {
+        error!("Failed to send GitLab fetch request to queue: {}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(serde_json::json!({
+        "status": "accepted",
+        "message": "GitLab MR queued for review"
+    })))
 }
