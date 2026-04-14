@@ -178,7 +178,82 @@ impl PromptRegistry {
         let mut clean_files = Vec::new();
         let mut content = String::with_capacity(10_000);
 
-        let stage_instruction = match stage {
+        // Try loading stage instruction from file first
+        let stage_instruction = self
+            .load_stage_instruction_from_file(stage)
+            .await
+            .or_else(|| self.get_hardcoded_stage_instruction(stage));
+
+        if let Some(instruction) = stage_instruction {
+            content.push_str(&instruction);
+            clean.push_str(&instruction);
+            content.push_str("\n\n");
+            clean.push_str("\n\n");
+        }
+
+        match stage {
+            3 => {
+                self.append_file(&mut content, &mut clean_files, "callstack.md")
+                    .await?;
+                self.append_file(&mut content, &mut clean_files, "technical-patterns.md")
+                    .await?;
+            }
+            5 => {
+                self.append_file(&mut content, &mut clean_files, "subsystem/locking.md")
+                    .await?;
+            }
+            8 => {
+                self.append_file(&mut content, &mut clean_files, "false-positive-guide.md")
+                    .await?;
+                self.append_file(&mut content, &mut clean_files, "severity.md")
+                    .await?;
+            }
+            9 => {
+                self.append_file(&mut content, &mut clean_files, "inline-template.md")
+                    .await?;
+            }
+            _ => {}
+        }
+        if !clean_files.is_empty() {
+            clean.push_str(&clean_files.join(", "));
+            clean.push_str("\n\n");
+        }
+        Ok((content, clean))
+    }
+
+    /// Load stage instruction from file (e.g., stages/01-analyze-goal.md)
+    async fn load_stage_instruction_from_file(&self, stage: u8) -> Option<String> {
+        let stage_dir = self.base_dir.join("stages");
+        if !stage_dir.exists() {
+            return None;
+        }
+
+        // Try to find a file matching the pattern: {stage:02}-*.md
+        let stage_prefix = format!("{:02}-", stage);
+
+        match std::fs::read_dir(&stage_dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                        && filename.starts_with(&stage_prefix)
+                        && filename.ends_with(".md")
+                    {
+                        // Found matching stage file, read it
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            return Some(content);
+                        }
+                    }
+                }
+                None
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Get hardcoded stage instruction (fallback)
+    fn get_hardcoded_stage_instruction(&self, stage: u8) -> Option<String> {
+        let instruction = match stage {
             1 => {
                 "# Stage 1. Analyze commit main goal
 
@@ -250,41 +325,11 @@ You are an expert kernel developer writing patches to fix bugs found during revi
             _ => "",
         };
 
-        if !stage_instruction.is_empty() {
-            content.push_str(stage_instruction);
-            clean.push_str(stage_instruction);
-            content.push_str("\n\n");
-            clean.push_str("\n\n");
+        if instruction.is_empty() {
+            None
+        } else {
+            Some(instruction.to_string())
         }
-
-        match stage {
-            3 => {
-                self.append_file(&mut content, &mut clean_files, "callstack.md")
-                    .await?;
-                self.append_file(&mut content, &mut clean_files, "technical-patterns.md")
-                    .await?;
-            }
-            5 => {
-                self.append_file(&mut content, &mut clean_files, "subsystem/locking.md")
-                    .await?;
-            }
-            8 => {
-                self.append_file(&mut content, &mut clean_files, "false-positive-guide.md")
-                    .await?;
-                self.append_file(&mut content, &mut clean_files, "severity.md")
-                    .await?;
-            }
-            9 => {
-                self.append_file(&mut content, &mut clean_files, "inline-template.md")
-                    .await?;
-            }
-            _ => {}
-        }
-        if !clean_files.is_empty() {
-            clean.push_str(&clean_files.join(", "));
-            clean.push_str("\n\n");
-        }
-        Ok((content, clean))
     }
 
     async fn append_file(
