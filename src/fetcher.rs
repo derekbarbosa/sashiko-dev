@@ -27,6 +27,9 @@ use tracing::{error, info, warn};
 pub struct FetchRequest {
     pub repo_url: Option<String>,
     pub commit_hash: String,
+    pub mr_url: Option<String>,
+    pub mr_title: Option<String>,
+    pub mr_number: Option<i64>,
 }
 
 pub struct FetchAgent {
@@ -543,6 +546,9 @@ impl FetchAgent {
                 .as_secs() as i64,
             index,
             total,
+            mr_url: None,
+            mr_title: None,
+            mr_number: None,
         })
     }
 }

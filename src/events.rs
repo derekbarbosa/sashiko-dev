@@ -36,6 +36,9 @@ pub enum Event {
         timestamp: i64,
         index: u32,
         total: u32,
+        mr_url: Option<String>,
+        mr_title: Option<String>,
+        mr_number: Option<i64>,
     },
     RawMboxSubmitted {
         raw: String,
