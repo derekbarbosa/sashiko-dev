@@ -14,6 +14,7 @@
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
@@ -277,6 +278,16 @@ fn default_log_level() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct CustomToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: String, // JSON schema as string
+    pub command: String,    // Shell command template
+    #[serde(default)]
+    pub allowed_paths: Vec<String>, // Security: whitelist
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct ToolsSettings {
     /// List of tools to enable (whitelist mode).
@@ -287,6 +298,26 @@ pub struct ToolsSettings {
     /// Takes precedence over enabled list.
     #[serde(default)]
     pub disabled: Vec<String>,
+    /// Custom tool definitions
+    #[serde(default)]
+    pub custom: Vec<CustomToolDefinition>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct PromptsSettings {
+    /// Override prompts directory (local path or remote URL)
+    /// Local: "/custom/prompts" or "./my-prompts"
+    /// Remote: "https://example.com/prompts" or "git://github.com/user/prompts.git"
+    pub directory: Option<String>,
+
+    /// Path to stages.toml configuration
+    /// Can be absolute or relative to prompts directory
+    pub stages_config: Option<PathBuf>,
+
+    /// Template variables for prompt substitution
+    #[serde(default)]
+    pub variables: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -310,6 +341,9 @@ pub struct Settings {
     /// Optional tools configuration.
     /// If omitted, all tools are enabled (default behavior).
     pub tools: Option<ToolsSettings>,
+    /// Optional prompts configuration.
+    /// If omitted, default prompts from third_party/prompts/kernel are used.
+    pub prompts: Option<PromptsSettings>,
 }
 
 fn default_subsystems() -> SubsystemsSettings {

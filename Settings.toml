@@ -66,3 +66,23 @@ ignore_files = ["MAINTAINERS", ".mailmap", ".gitignore", "LICENSES/"]
 # enabled = ["read_files", "git_diff", "git_log", "git_show", "search_file_content"]
 # Blacklist mode: disable specific tools (takes precedence over enabled)
 # disabled = ["git_checkout", "git_branch", "TodoWrite"]
+
+# Optional: Configure prompts customization
+# If omitted, default prompts from third_party/prompts/kernel are used
+# [prompts]
+# Local directory override
+# directory = "/custom/prompts"
+# directory = "./my-prompts"
+
+# Remote URL (downloads and caches prompts)
+# directory = "https://example.com/sashiko-prompts"
+# directory = "git://github.com/user/sashiko-prompts.git"
+
+# Custom stages configuration
+# stages_config = "stages.toml"
+
+# Template variables for prompt customization
+# [prompts.variables]
+# project_name = "My Custom Project"
+# custom_guidelines = "focus on security and performance"
+# subsystem_specific = "networking stack"
