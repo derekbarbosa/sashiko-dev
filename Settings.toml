@@ -52,3 +52,11 @@ worktree_dir = "review_trees"
 timeout_seconds = 7200
 max_retries = 3
 ignore_files = ["MAINTAINERS", ".mailmap", ".gitignore", "LICENSES/"]
+
+# Optional: Configure available tools for AI agent
+# If omitted, all tools are enabled (default behavior)
+# [tools]
+# Whitelist mode: only enable specific tools
+# enabled = ["read_files", "git_diff", "git_log", "git_show", "search_file_content"]
+# Blacklist mode: disable specific tools (takes precedence over enabled)
+# disabled = ["git_checkout", "git_branch", "TodoWrite"]

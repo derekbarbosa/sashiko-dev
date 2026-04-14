@@ -246,6 +246,19 @@ fn default_log_level() -> String {
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
+pub struct ToolsSettings {
+    /// List of tools to enable (whitelist mode).
+    /// If empty, all tools are enabled by default.
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    /// List of tools to disable (blacklist mode).
+    /// Takes precedence over enabled list.
+    #[serde(default)]
+    pub disabled: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
 pub struct Settings {
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -257,6 +270,9 @@ pub struct Settings {
     pub server: ServerSettings,
     pub git: GitSettings,
     pub review: ReviewSettings,
+    /// Optional tools configuration.
+    /// If omitted, all tools are enabled (default behavior).
+    pub tools: Option<ToolsSettings>,
 }
 
 impl Settings {
