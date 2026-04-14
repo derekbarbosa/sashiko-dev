@@ -1048,6 +1048,7 @@ fn identify_subsystems(
             } else if lower_email.ends_with("@vger.kernel.org")
                 || lower_email.ends_with("@lists.linux.dev")
                 || lower_email.ends_with("@lists.infradead.org")
+                || lower_email.ends_with("@kvack.org")
             {
                 if let Some(name) = lower_email.split('@').next() {
                     subsystems.push((name.to_string(), lower_email));
@@ -1150,7 +1151,7 @@ mod tests {
         let to = "linux-usb@vger.kernel.org, random-user@example.com";
         let cc = "bpf@vger.kernel.org";
         let subsystems = identify_subsystems(to, cc, &[]);
-        assert!(subsystems.contains(&("usb".to_string(), "linux-usb@vger.kernel.org".to_string())));
+        assert!(subsystems.contains(&("linux-usb".to_string(), "linux-usb@vger.kernel.org".to_string())));
         assert!(subsystems.contains(&("bpf".to_string(), "bpf@vger.kernel.org".to_string())));
         // random-user should be ignored as it doesn't match list patterns
         assert_eq!(subsystems.len(), 2);
