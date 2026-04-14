@@ -56,6 +56,9 @@ pub struct PatchsetRow {
     pub prompts_git_hash: Option<String>,
     pub baseline_logs: Option<String>,
     pub provider: Option<String>,
+    pub mr_url: Option<String>,
+    pub mr_title: Option<String>,
+    pub mr_number: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -424,6 +427,11 @@ impl Database {
             .try_add_column("patchsets", "baseline_logs", "TEXT")
             .await;
         let _ = self.try_add_column("patchsets", "provider", "TEXT").await;
+        let _ = self.try_add_column("patchsets", "mr_url", "TEXT").await;
+        let _ = self.try_add_column("patchsets", "mr_title", "TEXT").await;
+        let _ = self
+            .try_add_column("patchsets", "mr_number", "INTEGER")
+            .await;
 
         let _ = self
             .conn
@@ -2118,7 +2126,8 @@ impl Database {
 
         let sql = format!(
             "SELECT p.id, p.subject, p.status, p.thread_id, p.author, p.date, p.cover_letter_message_id, p.total_parts, p.received_parts, GROUP_CONCAT(s.name, ','),
-             COALESCE(f.low, 0), COALESCE(f.medium, 0), COALESCE(f.high, 0), COALESCE(f.critical, 0), p.baseline_id, p.failed_reason, p.target_review_count, p.skip_filters, p.only_filters
+             COALESCE(f.low, 0), COALESCE(f.medium, 0), COALESCE(f.high, 0), COALESCE(f.critical, 0), p.baseline_id, p.failed_reason, p.target_review_count, p.skip_filters, p.only_filters,
+             p.mr_url, p.mr_title, p.mr_number
              FROM patchsets p
              LEFT JOIN patchsets_subsystems ps ON p.id = ps.patchset_id
              LEFT JOIN subsystems s ON ps.subsystem_id = s.id
@@ -2180,6 +2189,9 @@ impl Database {
                 target_review_count: row.get(16).ok(),
                 skip_filters: row.get(17).ok(),
                 only_filters: row.get(18).ok(),
+                mr_url: row.get(19).ok(),
+                mr_title: row.get(20).ok(),
+                mr_number: row.get(21).ok(),
                 model_name: None,
                 prompts_git_hash: None,
                 baseline_logs: None,
@@ -2895,6 +2907,9 @@ impl Database {
                 prompts_git_hash: None,
                 baseline_logs: None,
                 provider: None,
+                mr_url: None,
+                mr_title: None,
+                mr_number: None,
             });
         }
         Ok(patchsets)
@@ -2955,12 +2970,16 @@ impl Database {
         self.rerun_patchset(patchset_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_fetching_patchset(
         &self,
         article_id: &str,
         subject: &str,
         skip_filters: Option<&Vec<String>>,
         only_filters: Option<&Vec<String>>,
+        mr_url: Option<&str>,
+        mr_title: Option<&str>,
+        mr_number: Option<i64>,
     ) -> Result<i64> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -2995,8 +3014,8 @@ impl Database {
                 // We don't want to reset if it is already Incomplete, Pending, or Reviewed.
                 if status == "Failed" || status == "Fetching" {
                     self.conn.execute(
-                        "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL, skip_filters = ?, only_filters = ? WHERE id = ?",
-                        libsql::params![skip_filters_json.clone(), only_filters_json.clone(), id]
+                        "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL, skip_filters = ?, only_filters = ?, mr_url = ?, mr_title = ?, mr_number = ? WHERE id = ?",
+                        libsql::params![skip_filters_json.clone(), only_filters_json.clone(), mr_url, mr_title, mr_number, id]
                     ).await?;
                 }
                 return Ok(id);
@@ -3009,9 +3028,9 @@ impl Database {
         // 3. Create the fetching patchset
         let mut rows = self.conn
             .query(
-                "INSERT INTO patchsets (thread_id, cover_letter_message_id, subject, status, date, skip_filters, only_filters) 
-                     VALUES (?, ?, ?, 'Fetching', ?, ?, ?) RETURNING id",
-                libsql::params![thread_id, root_msg_id, subject, now, skip_filters_json, only_filters_json],
+                "INSERT INTO patchsets (thread_id, cover_letter_message_id, subject, status, date, skip_filters, only_filters, mr_url, mr_title, mr_number)
+                     VALUES (?, ?, ?, 'Fetching', ?, ?, ?, ?, ?, ?) RETURNING id",
+                libsql::params![thread_id, root_msg_id, subject, now, skip_filters_json, only_filters_json, mr_url, mr_title, mr_number],
             )
             .await?;
 
