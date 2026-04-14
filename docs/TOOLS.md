@@ -315,11 +315,13 @@ For quick testing with minimal tools:
 enabled = ["read_files", "git_diff"]
 ```
 
-## Future Enhancements
+## Custom Tools
 
-### Custom Tool Definitions (Planned)
+Sashiko supports custom tool definitions via configuration, enabling domain-specific tools without code changes. This provides plugin-like extensibility for specialized tooling requirements.
 
-Future versions may support custom tool definitions via configuration, allowing domain-specific tools without code changes:
+### Defining Custom Tools
+
+Add custom tool definitions to `Settings.toml`:
 
 ```toml
 [[tools.custom]]
@@ -329,14 +331,234 @@ parameters = """
 {
   "type": "OBJECT",
   "properties": {
-    "path": { "type": "STRING" }
-  }
+    "path": { "type": "STRING", "description": "File path to analyze" }
+  },
+  "required": ["path"]
 }
 """
-command = "/usr/bin/custom-analyzer --file {path}"
+command = "/usr/local/bin/my-analyzer --file {path} --output json"
+allowed_paths = ["src/", "include/"]
+
+[[tools.custom]]
+name = "check_license_headers"
+description = "Verify license headers in source files"
+parameters = """
+{
+  "type": "OBJECT",
+  "properties": {
+    "files": {
+      "type": "ARRAY",
+      "items": { "type": "STRING" },
+      "description": "List of files to check"
+    }
+  },
+  "required": ["files"]
+}
+"""
+command = "/usr/bin/license-checker {files}"
+allowed_paths = ["src/"]
 ```
 
-This would enable plugin-like extensibility for enterprise deployments with specialized tooling requirements.
+### Custom Tool Configuration
+
+Each custom tool requires:
+
+- **`name`**: Tool identifier (used by AI agent)
+- **`description`**: Human-readable description of what the tool does
+- **`parameters`**: JSON schema defining the tool's parameters
+- **`command`**: Shell command template with `{param}` placeholders
+- **`allowed_paths`** (optional): Whitelist of allowed paths for security
+
+### Parameter Substitution
+
+The `command` field supports parameter substitution using `{parameter_name}` syntax:
+
+```toml
+command = "/usr/bin/tool --input {file} --output {output_dir}"
+```
+
+When the AI calls the tool with `{"file": "src/main.rs", "output_dir": "/tmp"}`, it becomes:
+
+```bash
+/usr/bin/tool --input src/main.rs --output /tmp
+```
+
+**Array parameters** are joined with spaces:
+
+```toml
+command = "grep -n {pattern} {files}"
+```
+
+With `{"pattern": "TODO", "files": ["src/a.rs", "src/b.rs"]}`:
+
+```bash
+grep -n TODO src/a.rs src/b.rs
+```
+
+### Security Considerations
+
+Custom tools execute shell commands in the worktree directory. Security measures include:
+
+#### Blocked Commands
+
+The following patterns are blocked for safety:
+- `rm -rf` (recursive delete)
+- `sudo` (privilege escalation)
+- `curl` / `wget` (network access)
+- `dd` (raw disk access)
+- `mkfs` (filesystem creation)
+
+**Example of rejected tool:**
+```toml
+# This will be rejected during registration
+command = "sudo apt install {package}"  # ❌ Contains 'sudo'
+```
+
+#### Path Validation
+
+All paths must remain within the worktree:
+
+```toml
+allowed_paths = ["src/", "tests/"]  # ✅ Valid paths
+allowed_paths = ["../../../etc"]    # ❌ Escapes worktree
+```
+
+Path parameters (keys containing "path" or "file") are validated against `allowed_paths`:
+
+```toml
+[[tools.custom]]
+name = "analyze_code"
+command = "analyzer {file}"
+allowed_paths = ["src/"]  # Only src/ files allowed
+```
+
+If the AI tries to call with `{"file": "config/secrets.toml"}`, it will be rejected.
+
+#### Sandboxing
+
+- Tools execute in the worktree directory (not system root)
+- No network access by default
+- Standard output/stderr captured and returned
+- Non-zero exit codes result in tool failure
+
+### Example: Performance Profiler
+
+```toml
+[[tools.custom]]
+name = "profile_function"
+description = "Profile specific function performance using perf"
+parameters = """
+{
+  "type": "OBJECT",
+  "properties": {
+    "function_name": {
+      "type": "STRING",
+      "description": "Name of function to profile"
+    },
+    "file": {
+      "type": "STRING",
+      "description": "Source file containing the function"
+    }
+  },
+  "required": ["function_name", "file"]
+}
+"""
+command = "perf-profiler --function {function_name} --file {file}"
+allowed_paths = ["src/", "kernel/"]
+```
+
+### Example: Code Quality Checker
+
+```toml
+[[tools.custom]]
+name = "run_clippy"
+description = "Run Rust Clippy linter on specific files"
+parameters = """
+{
+  "type": "OBJECT",
+  "properties": {
+    "files": {
+      "type": "ARRAY",
+      "items": { "type": "STRING" },
+      "description": "Rust source files to check"
+    },
+    "pedantic": {
+      "type": "BOOLEAN",
+      "description": "Enable pedantic lints"
+    }
+  },
+  "required": ["files"]
+}
+"""
+command = "cargo clippy --message-format=json -- {files}"
+allowed_paths = ["src/", "tests/"]
+```
+
+### Example: Documentation Generator
+
+```toml
+[[tools.custom]]
+name = "generate_docs"
+description = "Generate API documentation for a module"
+parameters = """
+{
+  "type": "OBJECT",
+  "properties": {
+    "module_path": {
+      "type": "STRING",
+      "description": "Path to module (e.g., 'src/api.rs')"
+    }
+  },
+  "required": ["module_path"]
+}
+"""
+command = "rustdoc {module_path} --output /tmp/docs"
+allowed_paths = ["src/"]
+```
+
+### Troubleshooting Custom Tools
+
+#### Tool Registration Failed
+
+If you see warnings about custom tool registration:
+
+```
+WARN: Failed to register custom tools: Potentially dangerous command in custom tool 'my_tool': contains 'curl'
+```
+
+**Solution:** Remove blocked commands from your tool definition. Use safe alternatives or file-based workflows.
+
+#### Path Not Allowed
+
+```
+Error: Path 'config/app.toml' not allowed for custom tool 'analyze'. Allowed paths: ["src/"]
+```
+
+**Solution:** Add the required path to `allowed_paths` or redesign the tool to work within allowed directories.
+
+#### Command Substitution Issues
+
+If parameters aren't being substituted correctly, verify:
+1. Parameter names in schema match placeholders in command
+2. Array parameters are properly joined
+3. No typos in `{parameter_name}` syntax
+
+### Best Practices
+
+1. **Minimal Privileges**: Only allow paths that the tool truly needs
+2. **Clear Descriptions**: Help the AI understand when to use the tool
+3. **Required Parameters**: Mark essential parameters as required
+4. **Error Handling**: Tools should exit non-zero on failure
+5. **Output Format**: Use structured output (JSON) when possible for AI parsing
+
+### Future Enhancements
+
+Planned improvements to custom tools:
+- **Remote execution**: Run tools on remote build servers
+- **Caching**: Cache tool results for repeated invocations
+- **Timeout configuration**: Per-tool timeout limits
+- **Resource limits**: CPU/memory constraints
+- **Advanced security**: SELinux/AppArmor profiles
 
 ## References
 
