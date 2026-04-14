@@ -32,6 +32,7 @@ pub struct ToolBox {
     worktree_path: PathBuf,
     prompts_path: Option<PathBuf>,
     enabled_tools: Option<Vec<String>>,
+    custom_tools: Vec<(AiTool, crate::settings::CustomToolDefinition)>,
 }
 
 impl ToolBox {
@@ -40,6 +41,7 @@ impl ToolBox {
             worktree_path,
             prompts_path,
             enabled_tools: None,
+            custom_tools: Vec::new(),
         }
     }
 
@@ -85,11 +87,21 @@ impl ToolBox {
             }
         });
 
-        Self {
+        let mut toolbox = Self {
             worktree_path,
             prompts_path,
             enabled_tools,
+            custom_tools: Vec::new(),
+        };
+
+        // Register custom tools if provided
+        if let Some(config) = tools_config {
+            if let Err(e) = toolbox.register_custom_tools(&config.custom) {
+                tracing::warn!("Failed to register custom tools: {}", e);
+            }
         }
+
+        toolbox
     }
 
     pub fn get_worktree_path(&self) -> &Path {
@@ -118,6 +130,139 @@ impl ToolBox {
             Some(enabled) => enabled.contains(&tool_name.to_string()),
             None => true, // All tools enabled by default
         }
+    }
+
+    /// Register custom tools from configuration
+    fn register_custom_tools(
+        &mut self,
+        custom_tool_defs: &[crate::settings::CustomToolDefinition],
+    ) -> Result<()> {
+        for tool_def in custom_tool_defs {
+            // Validate command security
+            self.validate_tool_security(tool_def)?;
+
+            // Parse parameter schema
+            let schema: serde_json::Value = serde_json::from_str(&tool_def.parameters)
+                .map_err(|e| anyhow!("Invalid parameter schema for tool '{}': {}", tool_def.name, e))?;
+
+            // Create AiTool definition
+            let ai_tool = AiTool {
+                name: tool_def.name.clone(),
+                description: tool_def.description.clone(),
+                parameters: schema,
+            };
+
+            // Store for later execution
+            self.custom_tools.push((ai_tool, tool_def.clone()));
+        }
+
+        Ok(())
+    }
+
+    /// Validate custom tool security
+    fn validate_tool_security(&self, tool_def: &crate::settings::CustomToolDefinition) -> Result<()> {
+        // Check for dangerous patterns
+        let dangerous_patterns = ["rm -rf", "sudo", "curl", "wget", "dd ", "mkfs"];
+        for pattern in &dangerous_patterns {
+            if tool_def.command.contains(pattern) {
+                anyhow::bail!(
+                    "Potentially dangerous command in custom tool '{}': contains '{}'",
+                    tool_def.name,
+                    pattern
+                );
+            }
+        }
+
+        // Validate allowed_paths if specified
+        if !tool_def.allowed_paths.is_empty() {
+            for path in &tool_def.allowed_paths {
+                let full_path = self.worktree_path.join(path);
+                if !full_path.starts_with(&self.worktree_path) {
+                    anyhow::bail!(
+                        "Custom tool '{}' path escapes worktree: {}",
+                        tool_def.name,
+                        path
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute custom tool
+    async fn execute_custom_tool(
+        &self,
+        tool_def: &crate::settings::CustomToolDefinition,
+        args: &serde_json::Value,
+    ) -> Result<String> {
+        // Build command with parameter substitution
+        let mut command = tool_def.command.clone();
+
+        // Simple parameter substitution: {param_name}
+        if let Some(obj) = args.as_object() {
+            for (key, value) in obj {
+                let placeholder = format!("{{{}}}", key);
+                let value_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Array(arr) => {
+                        // Join array elements with spaces
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    }
+                    _ => value.to_string(),
+                };
+                command = command.replace(&placeholder, &value_str);
+            }
+        }
+
+        // Validate path parameters against whitelist if specified
+        if !tool_def.allowed_paths.is_empty() {
+            // Extract potential file paths from args and validate
+            if let Some(obj) = args.as_object() {
+                for (key, value) in obj {
+                    if key.contains("path") || key.contains("file") {
+                        let path_str = match value {
+                            serde_json::Value::String(s) => s.as_str(),
+                            _ => continue,
+                        };
+
+                        let is_allowed = tool_def.allowed_paths.iter().any(|allowed| {
+                            path_str.starts_with(allowed)
+                        });
+
+                        if !is_allowed {
+                            anyhow::bail!(
+                                "Path '{}' not allowed for custom tool '{}'. Allowed paths: {:?}",
+                                path_str,
+                                tool_def.name,
+                                tool_def.allowed_paths
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Execute command in worktree
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&command)
+            .current_dir(&self.worktree_path)
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "Custom tool '{}' failed: {}",
+                tool_def.name,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     /// Returns generic tool declarations.
@@ -297,6 +442,11 @@ impl ToolBox {
             });
         }
 
+        // Add custom tools
+        for (ai_tool, _) in &self.custom_tools {
+            decls.push(ai_tool.clone());
+        }
+
         // Filter declarations based on enabled_tools configuration
         decls
             .into_iter()
@@ -306,6 +456,16 @@ impl ToolBox {
 
     pub async fn call(&self, name: &str, args: Value) -> Result<Value> {
         let name_normalized = name.trim().to_lowercase();
+
+        // Check if it's a custom tool first
+        if let Some((_, tool_def)) = self
+            .custom_tools
+            .iter()
+            .find(|(ai_tool, _)| ai_tool.name.to_lowercase() == name_normalized)
+        {
+            let result = self.execute_custom_tool(tool_def, &args).await?;
+            return Ok(Value::String(result));
+        }
 
         // Check if tool is enabled
         if !self.is_tool_enabled(&name_normalized) {
@@ -991,6 +1151,7 @@ mod tests {
         let config = ToolsSettings {
             enabled: vec!["read_files".to_string(), "git_diff".to_string()],
             disabled: vec![],
+            custom: vec![],
         };
 
         let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
@@ -1016,6 +1177,7 @@ mod tests {
         let config = ToolsSettings {
             enabled: vec![],
             disabled: vec!["git_checkout".to_string(), "TodoWrite".to_string()],
+            custom: vec![],
         };
 
         let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
@@ -1046,6 +1208,7 @@ mod tests {
                 "git_checkout".to_string(),
             ],
             disabled: vec!["git_checkout".to_string()], // Takes precedence
+            custom: vec![],
         };
 
         let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
@@ -1068,6 +1231,7 @@ mod tests {
         let config = ToolsSettings {
             enabled: vec!["read_files".to_string()],
             disabled: vec![],
+            custom: vec![],
         };
 
         let toolbox = ToolBox::with_config(dir.path().to_path_buf(), None, Some(&config));
@@ -1113,6 +1277,7 @@ mod tests {
         let config = ToolsSettings {
             enabled: vec!["read_files".to_string(), "read_prompt".to_string()],
             disabled: vec![],
+            custom: vec![],
         };
 
         // With prompts_path, read_prompt should be available
