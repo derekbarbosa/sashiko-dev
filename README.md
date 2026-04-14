@@ -238,6 +238,14 @@ development. To get the most out of it:
 Once the daemon is running, you can access the Web UI, the daemon will print the
 URL to access it from localhost.
 
+## Customization
+
+Sashiko is highly configurable:
+
+- **AI Tools** - Configure which tools are available ([docs/TOOLS.md](docs/TOOLS.md))
+- **Review Prompts** - Customize stage instructions and guidance ([docs/PROMPTS.md](docs/PROMPTS.md))
+- **Forge Integration** - GitHub and GitLab support (see GitHub/GitLab setup guides)
+
 ## Benchmarking
 
 To evaluate the AI's review performance against a set of known issues, follow this workflow:
