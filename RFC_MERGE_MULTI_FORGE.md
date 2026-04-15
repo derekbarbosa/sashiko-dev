@@ -46,10 +46,10 @@ This changeset provides:
 **New Files:**
 - `src/forge.rs` - ForgeProvider trait abstraction
 - `src/fetcher.rs` - Enhanced metadata handling (PR/MR title, number, URL)
-- `trigger_gitlab_mr_review.sh` - GitLab MR review trigger
-- `test_gitlab_webhook.sh` - GitLab webhook testing
-- `GITLAB_SETUP.md`, `QUICKSTART_GITLAB.md` - GitLab documentation
-- `GITHUB_SETUP.md`, `QUICKSTART_GITHUB.md` - GitHub documentation
+- `scripts/trigger_gitlab_mr_review.sh` - GitLab MR review trigger
+- `scripts/test_gitlab_webhook.sh` - GitLab webhook testing
+- `docs/GITLAB_SETUP.md`, `docs/QUICKSTART_GITLAB.md` - GitLab documentation
+- `docs/GITHUB_SETUP.md`, `docs/QUICKSTART_GITHUB.md` - GitHub documentation
 
 **Key Features:**
 - GitHub PR webhook integration (`/api/webhook/github`)
@@ -154,10 +154,10 @@ The abstraction enables community to add forges:
 **Testing:**
 ```bash
 # GitHub
-./trigger_github_pr_review.sh torvalds/linux 12345
+./scripts/trigger_github_pr_review.sh torvalds/linux 12345
 
 # GitLab
-./trigger_gitlab_mr_review.sh redhat/centos-stream/kernel 42
+./scripts/trigger_gitlab_mr_review.sh redhat/centos-stream/kernel 42
 ```
 
 ### 3. Customization Without Code Changes
@@ -203,7 +203,7 @@ Create custom prompts in `third_party/prompts/iproute/stages/*.md` - no code cha
 **Concern:** More code to maintain
 **Mitigation:**
 - Well-abstracted (ForgeProvider trait)
-- Comprehensive documentation
+- Comprehensive documentation (see docs/)
 - All changes tested
 - Optional features (forge support disabled by default)
 
@@ -218,7 +218,7 @@ Create custom prompts in `third_party/prompts/iproute/stages/*.md` - no code cha
 ### Risk 3: Documentation Maintenance
 **Concern:** More docs to keep updated
 **Mitigation:**
-- Modular docs (GITHUB_SETUP, GITLAB_SETUP separate)
+- Modular docs in docs/ (GITHUB_SETUP, GITLAB_SETUP separate)
 - Quickstart guides minimize duplication
 - Examples tested and verified
 
@@ -394,13 +394,13 @@ directory = "custom/prompts"
 - `src/fetcher.rs` - Enhanced fetching with metadata
 
 ### New Files (Scripts)
-- `trigger_gitlab_mr_review.sh` - GitLab trigger
-- `test_gitlab_webhook.sh` - GitLab webhook test
-- `check_server_config.sh` - Server validation
+- `scripts/trigger_gitlab_mr_review.sh` - GitLab trigger
+- `scripts/test_gitlab_webhook.sh` - GitLab webhook test
+- `scripts/check_server_config.sh` - Server validation
 
 ### New Files (Documentation)
-- `GITHUB_SETUP.md`, `GITLAB_SETUP.md` - Setup guides
-- `QUICKSTART_GITHUB.md`, `QUICKSTART_GITLAB.md` - Quick starts
+- `docs/GITHUB_SETUP.md`, `docs/GITLAB_SETUP.md` - Setup guides
+- `docs/QUICKSTART_GITHUB.md`, `docs/QUICKSTART_GITLAB.md` - Quick starts
 - `docs/TOOLS.md`, `docs/PROMPTS.md` - Customization guides
 
 ### New Files (Prompts)
@@ -419,10 +419,10 @@ directory = "custom/prompts"
 
 ### Test Coverage
 All webhook handlers tested with:
-- `test_github_webhook.sh`
-- `test_gitlab_webhook.sh`
-- `trigger_github_pr_review.sh`
-- `trigger_gitlab_mr_review.sh`
+- `scripts/test_github_webhook.sh`
+- `scripts/test_gitlab_webhook.sh`
+- `scripts/trigger_github_pr_review.sh`
+- `scripts/trigger_gitlab_mr_review.sh`
 
 ---
 
