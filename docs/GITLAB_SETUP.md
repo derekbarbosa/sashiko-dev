@@ -2,6 +2,50 @@
 
 This guide explains how to configure GitLab to automatically trigger Sashiko reviews for merge requests.
 
+> **Note:** For general forge integration requirements and architecture, see [FORGE_SETUP.md](FORGE_SETUP.md). This guide covers GitLab-specific configuration.
+
+## Quick Start (5 Minutes)
+
+### Step 1: Enable Forge Mode
+
+Edit `Settings.toml`:
+
+```toml
+[forge]
+enabled = true
+```
+
+Restart Sashiko.
+
+### Step 2: Verify Server is Ready
+
+```bash
+./scripts/check_server_config.sh
+```
+
+Expected output: "✓ Server is ready for GitLab webhooks!"
+
+### Step 3: Test with a Specific MR
+
+```bash
+# Replace 123 with an actual MR number
+./scripts/trigger_gitlab_mr_review.sh 123
+```
+
+This script will:
+1. Fetch MR details from GitLab API
+2. Send a simulated webhook to Sashiko
+3. Show the response
+
+### Step 4: Monitor Reviews
+
+View reviews at: http://localhost:9080/
+
+Reviews for GitLab MRs will display as:
+- **Subject**: `!<MR_NUMBER>: <MR_TITLE>`
+- **Author**: Original commit author
+- **Parts**: Number of commits in the MR
+
 ## Prerequisites
 
 1. Sashiko server running and accessible
@@ -191,3 +235,10 @@ Some recent MRs from centos-stream-10:
 # Or manually find MRs at:
 # https://gitlab.com/redhat/centos-stream/src/kernel/centos-stream-10/-/merge_requests
 ```
+
+## See Also
+
+- [FORGE_SETUP.md](FORGE_SETUP.md) - General forge integration guide
+- [GITHUB_SETUP.md](GITHUB_SETUP.md) - GitHub integration setup
+- [README.md](../README.md) - Main project documentation
+- [Settings.toml](../Settings.toml) - Configuration reference

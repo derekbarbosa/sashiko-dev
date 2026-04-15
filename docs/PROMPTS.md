@@ -1,5 +1,88 @@
 # Prompt Customization Guide
 
+## Quick Start (5 Minutes)
+
+Get started customizing Sashiko's review prompts quickly.
+
+### 1. Edit a Single Stage (Easiest)
+
+Edit an existing stage instruction directly:
+
+```bash
+# Edit stage 1 (architectural review)
+vim third_party/prompts/kernel/stages/01-analyze-goal.md
+
+# Changes apply immediately - no rebuild needed
+```
+
+### 2. Add Template Variables
+
+Customize prompts with variables. Edit `Settings.toml`:
+
+```toml
+[prompts.variables]
+project_name = "My Kernel Module"
+focus_area = "memory safety"
+```
+
+Then use in prompts:
+```markdown
+# Stage 1: Review for {{project_name}}
+Focus specifically on {{focus_area}}.
+Review date: {{date}}
+```
+
+### 3. Create Custom Prompts Directory
+
+Copy and customize all prompts:
+
+```bash
+# Copy default prompts
+cp -r third_party/prompts/kernel my-prompts
+
+# Edit your copies
+vim my-prompts/stages/01-analyze-goal.md
+
+# Configure Sashiko to use them
+echo '[prompts]
+directory = "./my-prompts"' >> Settings.toml
+```
+
+### 4. Disable a Stage
+
+Create `third_party/prompts/kernel/stages.toml`:
+
+```toml
+# Disable hardware review (stage 7)
+[[stages]]
+number = 7
+enabled = false
+```
+
+### 5. Add a Custom Stage
+
+In `stages.toml`:
+
+```toml
+[[stages]]
+number = 10
+name = "Performance analysis"
+instruction_file = "custom/performance.md"
+enabled = true
+```
+
+Create `third_party/prompts/kernel/custom/performance.md`:
+
+```markdown
+# Stage 10: Performance Analysis
+
+Analyze the patch for performance implications:
+- Algorithmic complexity (O(n), O(n²), etc.)
+- Cache efficiency
+- Lock contention
+- Memory allocation patterns
+```
+
 ## Overview
 
 Sashiko's review process uses a multi-stage prompt system. You can customize:

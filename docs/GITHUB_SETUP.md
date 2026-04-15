@@ -2,6 +2,100 @@
 
 Complete guide for configuring Sashiko to automatically review GitHub Pull Requests via webhooks.
 
+> **Note:** For general forge integration requirements and architecture, see [FORGE_SETUP.md](FORGE_SETUP.md). This guide covers GitHub-specific configuration.
+
+## Quick Start (5 Minutes)
+
+Get Sashiko reviewing GitHub Pull Requests quickly.
+
+### Step 1: Configure LLM Provider
+
+Set your API key:
+```bash
+# For Gemini
+export LLM_API_KEY="your-gemini-api-key"
+
+# For Claude
+export ANTHROPIC_API_KEY="your-claude-api-key"
+```
+
+Verify `Settings.toml` has your LLM provider configured:
+```toml
+[ai]
+provider = "gemini"  # or "claude"
+model = "gemini-3.1-pro-preview"  # or "claude-sonnet-4-6"
+```
+
+### Step 2: Start Sashiko Server
+
+```bash
+cargo run --release
+```
+
+You should see output like:
+```
+Server running on http://127.0.0.1:8080
+```
+
+**Verify it's running:**
+```bash
+curl http://localhost:8080/
+```
+
+### Step 3: Test with a Pull Request
+
+#### Option A: Test with Real GitHub PR
+
+Use the trigger script to review any public GitHub PR:
+```bash
+./scripts/trigger_github_pr_review.sh torvalds/linux 12345
+```
+
+Replace `torvalds/linux` with `owner/repo` and `12345` with a PR number.
+
+#### Option B: Test with Synthetic Webhook
+
+Send a test webhook payload to verify the endpoint:
+```bash
+./scripts/test_github_webhook.sh
+```
+
+#### Option C: Test with Local Commits
+
+Review your own local changes:
+```bash
+# Review last 3 commits
+cargo run --bin sashiko-cli -- submit HEAD~3..HEAD
+```
+
+### Step 4: Monitor Progress
+
+Open your browser to the web UI:
+```
+http://localhost:8080/
+```
+
+You'll see:
+- Review queue status
+- Current review progress
+- Completed reviews with findings
+
+### Step 5: Configure Webhook (Optional)
+
+To automatically review PRs when they're opened on GitHub:
+
+1. Go to your GitHub repository → Settings → Webhooks
+2. Add webhook:
+   - **URL:** `http://your-server:8080/api/webhook/github`
+   - **Content type:** `application/json`
+   - **Events:** Pull requests only
+3. For local development, use ngrok or SSH tunnel:
+   ```bash
+   # Using ngrok
+   ngrok http 8080
+   # Use the ngrok URL in webhook configuration
+   ```
+
 ## Prerequisites
 
 - Sashiko running in server mode (daemon)
@@ -213,9 +307,11 @@ Supported actions: `opened`, `reopened`, `synchronize` (new commits pushed)
 
 ## See Also
 
-- [QUICKSTART_GITHUB.md](QUICKSTART_GITHUB.md) - Quick start guide for rapid setup
-- [README.md](README.md) - Main project documentation
-- [Settings.toml](Settings.toml) - Configuration reference
+- Quick start content is now in the top section of this document
+- [FORGE_SETUP.md](FORGE_SETUP.md) - General forge integration guide
+- [GITLAB_SETUP.md](GITLAB_SETUP.md) - GitLab integration setup
+- [README.md](../README.md) - Main project documentation
+- [Settings.toml](../Settings.toml) - Configuration reference
 
 ## Getting Help
 
