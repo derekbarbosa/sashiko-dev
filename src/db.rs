@@ -3918,6 +3918,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_embargoed_patchset_dynamic_recalculation() {
+        let db = setup_db().await;
+        let thread_id = db
+            .create_thread("root_embargo", "Embargo Test", 60000)
+            .await
+            .unwrap();
+        let author = "Embargo Author <embargo@example.com>";
+
+        let ps_id = db
+            .create_patchset(
+                thread_id,
+                None,
+                "msg_embargo",
+                "Embargo Test",
+                author,
+                60000,
+                1,
+                1,
+                "",
+                "",
+                None,
+                1,
+                None,
+                true,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        db.create_message(
+            "msg_embargo",
+            thread_id,
+            None,
+            author,
+            "Embargo Test",
+            60000,
+            "",
+            "",
+            "",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        db.create_patch(ps_id, "msg_embargo", 1, "diff")
+            .await
+            .unwrap();
+
+        db.conn
+            .execute(
+                "UPDATE patchsets SET status = 'Reviewed' WHERE id = ?",
+                libsql::params![ps_id],
+            )
+            .await
+            .unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        db.set_patchset_embargo_until(ps_id, now + 3600)
+            .await
+            .unwrap();
+
+        db.create_review(ps_id, None, "gemini", "test-model", None, None)
+            .await
+            .unwrap();
+
+        let patchsets = db.get_patchsets(10, 0, None, None).await.unwrap();
+        assert_eq!(patchsets[0].status.as_deref(), Some("Embargoed"));
+        let details = db
+            .get_patchset_details(ps_id, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            details
+                .get("reviews")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        db.set_patchset_embargo_until(ps_id, now - 3600)
+            .await
+            .unwrap();
+
+        let patchsets = db.get_patchsets(10, 0, None, None).await.unwrap();
+        assert_eq!(patchsets[0].status.as_deref(), Some("Reviewed"));
+        let details = db
+            .get_patchset_details(ps_id, None, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !details
+                .get("reviews")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn test_implicit_version_mismatch_should_merge() {
         let db = setup_db().await;
         let thread_id = db

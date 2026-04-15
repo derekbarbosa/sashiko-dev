@@ -857,17 +857,7 @@ async fn process_parsed_article(
             )
         };
 
-        let mut max_embargo_hours = policy.defaults.embargo_hours.unwrap_or(0);
-        for (_, email) in &subsystems {
-            for sp in policy.subsystems.values() {
-                #[allow(clippy::collapsible_if)]
-                if sp.lists.iter().any(|list| email.contains(list)) {
-                    if let Some(delay) = sp.embargo_hours {
-                        max_embargo_hours = max_embargo_hours.max(delay);
-                    }
-                }
-            }
-        }
+        let max_embargo_hours = calculate_embargo_hours(&subsystems, policy);
 
         let embargo_until = if max_embargo_hours > 0 {
             let now = std::time::SystemTime::now()
@@ -1022,6 +1012,24 @@ async fn process_recipients(
 }
 
 // Helper function to map To/Cc to Subsystems
+fn calculate_embargo_hours(
+    subsystems: &[(String, String)],
+    policy: &sashiko::email_policy::EmailPolicyConfig,
+) -> u32 {
+    let mut max_embargo_hours = policy.defaults.embargo_hours.unwrap_or(0);
+    for (_, email) in subsystems {
+        for sp in policy.subsystems.values() {
+            #[allow(clippy::collapsible_if)]
+            if sp.lists.iter().any(|list| email.contains(list)) {
+                if let Some(delay) = sp.embargo_hours {
+                    max_embargo_hours = max_embargo_hours.max(delay);
+                }
+            }
+        }
+    }
+    max_embargo_hours
+}
+
 fn identify_subsystems(to: &str, cc: &str) -> Vec<(String, String)> {
     let mut subsystems = Vec::new();
     let mut all_recipients = String::new();
@@ -1147,5 +1155,55 @@ mod tests {
         let to = "linux-mm@kvack.org";
         let subsystems = identify_subsystems(to, "");
         assert!(subsystems.contains(&("linux-mm".to_string(), "linux-mm@kvack.org".to_string())));
+    }
+
+    #[test]
+    fn test_calculate_embargo_hours() {
+        use sashiko::email_policy::{EmailPolicyConfig, SubsystemPolicy};
+        use std::collections::HashMap;
+
+        let mut subsystems_policy = HashMap::new();
+        subsystems_policy.insert(
+            "net".to_string(),
+            SubsystemPolicy {
+                lists: vec!["netdev@vger.kernel.org".to_string()],
+                embargo_hours: Some(2),
+                ..Default::default()
+            },
+        );
+        subsystems_policy.insert(
+            "usb".to_string(),
+            SubsystemPolicy {
+                lists: vec!["linux-usb@vger.kernel.org".to_string()],
+                embargo_hours: Some(5),
+                ..Default::default()
+            },
+        );
+
+        let policy = EmailPolicyConfig {
+            defaults: SubsystemPolicy {
+                embargo_hours: Some(1),
+                ..Default::default()
+            },
+            subsystems: subsystems_policy,
+        };
+
+        // Case 1: No matching subsystems -> falls back to default
+        let subs = vec![(
+            "LKML".to_string(),
+            "linux-kernel@vger.kernel.org".to_string(),
+        )];
+        assert_eq!(calculate_embargo_hours(&subs, &policy), 1);
+
+        // Case 2: Single match
+        let subs = vec![("netdev".to_string(), "netdev@vger.kernel.org".to_string())];
+        assert_eq!(calculate_embargo_hours(&subs, &policy), 2);
+
+        // Case 3: Multiple matches -> takes maximum
+        let subs = vec![
+            ("netdev".to_string(), "netdev@vger.kernel.org".to_string()),
+            ("usb".to_string(), "linux-usb@vger.kernel.org".to_string()),
+        ];
+        assert_eq!(calculate_embargo_hours(&subs, &policy), 5);
     }
 }
