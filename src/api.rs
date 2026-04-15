@@ -17,7 +17,7 @@ use crate::events::Event;
 use crate::fetcher::FetchRequest;
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     routing::{get, get_service, post},
 };
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -125,6 +125,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub sender: mpsc::Sender<Event>,
     pub fetch_sender: mpsc::Sender<FetchRequest>,
+    pub forge_registry: Arc<crate::forge::ForgeRegistry>,
     pub read_only: bool,
     pub allow_all_submit: bool,
     pub smtp_enabled: bool,
@@ -235,12 +236,15 @@ pub async fn run_server(
     smtp_enabled: bool,
     dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let forge_registry = Arc::new(crate::forge::ForgeRegistry::new());
+
     let state = Arc::new(AppState {
         read_only: settings.server.read_only,
         settings: settings.clone(),
         db,
         sender,
         fetch_sender,
+        forge_registry,
         allow_all_submit,
         smtp_enabled,
         dry_run,
@@ -255,7 +259,6 @@ pub async fn run_server(
 
     let app = Router::new()
         .route("/api/config", get(get_config))
-        .route("/api/webhook/github", post(github_webhook))
         .route("/api/lists", get(list_mailing_lists))
         .route("/api/patchsets", get(list_patchsets))
         .route("/api/messages", get(list_messages))
@@ -271,8 +274,7 @@ pub async fn run_server(
         .route("/api/submit", post(submit_patch))
         .route("/api/patchset/rerun", post(rerun_patchset))
         .route("/api/patch/rerun", post(rerun_patch))
-        .route("/api/webhook/github", post(github_webhook))
-        .route("/api/webhook/gitlab", post(gitlab_webhook))
+        .route("/api/webhook/:provider", post(forge_webhook))
         .route("/", get_service(ServeFile::new("static/index.html")))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state);
@@ -981,194 +983,80 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<serde_jso
     })))
 }
 
-// GitHub webhook payload structures
-#[derive(Deserialize, Debug)]
-struct GithubPullRequest {
-    pub title: Option<String>,
-    pub html_url: Option<String>,
-    pub number: Option<i64>,
-    pub base: Option<GithubRef>,
-    pub head: Option<GithubRef>,
-}
-
-#[derive(Deserialize, Debug)]
-struct GithubRef {
-    pub sha: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct GithubWebhookPayload {
-    pub action: Option<String>,
-    pub pull_request: Option<GithubPullRequest>,
-}
-
-// GitLab webhook payload structures
-#[derive(Deserialize, Debug)]
-struct GitlabObjectAttributes {
-    pub title: Option<String>,
-    pub url: Option<String>,
-    pub iid: Option<i64>,
-    pub last_commit: Option<GitlabCommit>,
-    #[allow(dead_code)]
-    pub target_branch: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct GitlabCommit {
-    pub id: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct GitlabWebhookPayload {
-    pub object_kind: Option<String>,
-    pub object_attributes: Option<GitlabObjectAttributes>,
-}
-
-async fn github_webhook(
+/// Generic webhook handler for all forge providers
+async fn forge_webhook(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<GithubWebhookPayload>,
+    Path(provider): Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    // 1. Security checks (unified)
     if state.read_only {
         return Err(StatusCode::FORBIDDEN);
     }
-
     if !state.allow_all_submit && !addr.ip().is_loopback() {
-        info!("Refused GitHub webhook from non-localhost: {}", addr);
+        info!("Refused {} webhook from non-localhost: {}", provider, addr);
         return Err(StatusCode::FORBIDDEN);
     }
 
-    info!("Received GitHub webhook: action={:?}", payload.action);
+    // 2. Get provider from registry
+    let forge = state.forge_registry.get(&provider).ok_or_else(|| {
+        warn!("Unknown forge provider: {}", provider);
+        StatusCode::NOT_FOUND
+    })?;
 
-    let pr = payload.pull_request.ok_or(StatusCode::BAD_REQUEST)?;
+    // 3. Validate event (uses trait!)
+    forge.validate_event(&headers)?;
 
-    let _base_sha = pr.base.and_then(|b| b.sha).ok_or(StatusCode::BAD_REQUEST)?;
-
-    let head_sha = pr.head.and_then(|h| h.sha).ok_or(StatusCode::BAD_REQUEST)?;
-
-    let mr_title = pr.title.clone();
-    let mr_url = pr.html_url.clone();
-    let mr_number = pr.number;
+    // 4. Parse payload (uses trait!)
+    let (action, metadata) = forge.parse_payload(&body)?;
 
     info!(
-        "GitHub PR #{}: {} - {}",
-        mr_number.unwrap_or(0),
-        mr_title.as_deref().unwrap_or("(no title)"),
-        mr_url.as_deref().unwrap_or("(no url)")
+        "{} {}: {} - {}",
+        forge.name(),
+        action,
+        metadata.pr_title.as_deref().unwrap_or("(no title)"),
+        metadata.pr_url.as_deref().unwrap_or("(no url)")
     );
 
-    // Create a placeholder patchset record
-    let default_subject = format!("GitHub PR #{}", mr_number.unwrap_or(0));
-    let subject = mr_title.as_deref().unwrap_or(&default_subject);
+    // 5. Create placeholder (unified)
+    let default_subject = format!("{} #{}", forge.name(), metadata.pr_number);
+    let subject = metadata.pr_title.as_deref().unwrap_or(&default_subject);
 
-    if let Err(e) = state
+    state
         .db
         .create_fetching_patchset(
-            &head_sha,
-            &format!("Fetching GitHub PR: {}", subject),
+            &metadata.head_sha,
+            &format!("Fetching {} PR/MR: {}", forge.name(), subject),
             None,
             None,
-            mr_url.as_deref(),
+            metadata.pr_url.as_deref(),
             Some(subject),
-            mr_number,
+            Some(metadata.pr_number),
         )
         .await
-    {
-        error!("Failed to create placeholder patchset: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+        .map_err(|e| {
+            error!("Failed to create placeholder patchset: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
-    // Create FetchRequest with metadata
+    // 6. Queue request (unified)
     let req = FetchRequest {
-        repo_url: None, // GitHub webhooks typically don't need explicit repo URL
-        commit_hash: head_sha,
-        mr_url,
-        mr_title,
-        mr_number,
+        repo_url: metadata.repo_url,
+        commit_hash: metadata.head_sha,
+        mr_url: metadata.pr_url,
+        mr_title: metadata.pr_title,
+        mr_number: Some(metadata.pr_number),
     };
 
-    if let Err(e) = state.fetch_sender.send(req).await {
-        error!("Failed to send GitHub fetch request to queue: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
+    state.fetch_sender.send(req).await.map_err(|e| {
+        error!("Failed to send fetch request to queue: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(serde_json::json!({
         "status": "accepted",
-        "message": "GitHub PR queued for review"
-    })))
-}
-
-async fn gitlab_webhook(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<GitlabWebhookPayload>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    if state.read_only {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    if !state.allow_all_submit && !addr.ip().is_loopback() {
-        info!("Refused GitLab webhook from non-localhost: {}", addr);
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    info!("Received GitLab webhook: kind={:?}", payload.object_kind);
-
-    let attrs = payload.object_attributes.ok_or(StatusCode::BAD_REQUEST)?;
-
-    let commit_sha = attrs
-        .last_commit
-        .and_then(|c| c.id)
-        .ok_or(StatusCode::BAD_REQUEST)?;
-
-    let mr_title = attrs.title.clone();
-    let mr_url = attrs.url.clone();
-    let mr_number = attrs.iid;
-
-    info!(
-        "GitLab MR !{}: {} - {}",
-        mr_number.unwrap_or(0),
-        mr_title.as_deref().unwrap_or("(no title)"),
-        mr_url.as_deref().unwrap_or("(no url)")
-    );
-
-    // Create a placeholder patchset record
-    let default_subject = format!("GitLab MR !{}", mr_number.unwrap_or(0));
-    let subject = mr_title.as_deref().unwrap_or(&default_subject);
-
-    if let Err(e) = state
-        .db
-        .create_fetching_patchset(
-            &commit_sha,
-            &format!("Fetching GitLab MR: {}", subject),
-            None,
-            None,
-            mr_url.as_deref(),
-            Some(subject),
-            mr_number,
-        )
-        .await
-    {
-        error!("Failed to create placeholder patchset: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    // Create FetchRequest with metadata
-    let req = FetchRequest {
-        repo_url: None, // GitLab webhooks typically don't need explicit repo URL
-        commit_hash: commit_sha,
-        mr_url,
-        mr_title,
-        mr_number,
-    };
-
-    if let Err(e) = state.fetch_sender.send(req).await {
-        error!("Failed to send GitLab fetch request to queue: {}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    Ok(Json(serde_json::json!({
-        "status": "accepted",
-        "message": "GitLab MR queued for review"
+        "message": format!("{} {} queued for review", forge.name(), action)
     })))
 }
