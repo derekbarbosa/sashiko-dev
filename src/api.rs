@@ -274,7 +274,7 @@ pub async fn run_server(
         .route("/api/submit", post(submit_patch))
         .route("/api/patchset/rerun", post(rerun_patchset))
         .route("/api/patch/rerun", post(rerun_patch))
-        .route("/api/webhook/:provider", post(forge_webhook))
+        .route("/api/webhook/{provider}", post(forge_webhook))
         .route("/", get_service(ServeFile::new("static/index.html")))
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state);
