@@ -295,9 +295,7 @@ pub async fn run_server(
 fn generate_synthetic_id(prefix: &str) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let start = SystemTime::now();
-    let since_the_epoch = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
+    let since_the_epoch = start.duration_since(UNIX_EPOCH).unwrap_or_default();
     // e.g. sashiko-local-1715890000-12345
     format!(
         "sashiko-{}-{}-{}",
@@ -975,7 +973,9 @@ async fn rerun_patch(
     Ok(Json(serde_json::json!({ "status": "accepted" })))
 }
 
-async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn get_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     Ok(Json(serde_json::json!({
         "project_name": state.settings.project.name,
         "project_description": state.settings.project.description,

@@ -272,10 +272,20 @@ impl FetchAgent {
                     // 3. Process each SHA
                     for (i, sha) in shas.iter().enumerate() {
                         // Get MR metadata for this commit range
-                        let (mr_title, mr_number) = self.mr_metadata.get(range)
-                            .unwrap_or(&(None, None));
+                        let (mr_title, mr_number) =
+                            self.mr_metadata.get(range).unwrap_or(&(None, None));
 
-                        match self.extract_patch(sha, range, (i + 1) as u32, count, mr_title.as_ref(), *mr_number).await {
+                        match self
+                            .extract_patch(
+                                sha,
+                                range,
+                                (i + 1) as u32,
+                                count,
+                                mr_title.as_ref(),
+                                *mr_number,
+                            )
+                            .await
+                        {
                             Ok(mut event) => {
                                 if let Event::PatchSubmitted {
                                     ref mut message_id, ..
@@ -313,10 +323,22 @@ impl FetchAgent {
                     };
 
                     // Get MR metadata for this commit
-                    let (mr_title, mr_number) = self.mr_metadata.get(&commit_or_range)
+                    let (mr_title, mr_number) = self
+                        .mr_metadata
+                        .get(&commit_or_range)
                         .unwrap_or(&(None, None));
 
-                    match self.extract_patch(&full_sha, &commit_or_range, 1, 1, mr_title.as_ref(), *mr_number).await {
+                    match self
+                        .extract_patch(
+                            &full_sha,
+                            &commit_or_range,
+                            1,
+                            1,
+                            mr_title.as_ref(),
+                            *mr_number,
+                        )
+                        .await
+                    {
                         Ok(mut event) => {
                             if let Event::PatchSubmitted {
                                 ref mut message_id, ..

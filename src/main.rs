@@ -455,6 +455,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut total_ingested = 0;
         let mut total_errors = 0;
 
+        let policy =
+            sashiko::email_policy::EmailPolicyConfig::load("email_policy.toml").unwrap_or_default();
+
         loop {
             let count = parsed_rx.recv_many(&mut buffer, 100).await;
             if count == 0 {
@@ -467,9 +470,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 total_errors += count; // Assume all failed if the transaction fails.
                 continue;
             }
-
-            let policy = sashiko::email_policy::EmailPolicyConfig::load("email_policy.toml")
-                .unwrap_or_default();
 
             for article in buffer.drain(..) {
                 match process_parsed_article(&worker_db, article, &policy, &mapping).await {
@@ -556,10 +556,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start Reviewer Service
-    let reviewer = Reviewer::new(db.clone(), settings.clone());
-    tokio::spawn(async move {
-        reviewer.start().await;
-    });
+    match Reviewer::new(db.clone(), settings.clone()) {
+        Ok(reviewer) => {
+            tokio::spawn(async move {
+                reviewer.start().await;
+            });
+        }
+        Err(e) => {
+            error!("Failed to initialize Reviewer service: {}", e);
+        }
+    }
 
     let metrics_db = db.clone();
     tokio::spawn(async move {
@@ -761,14 +767,14 @@ async fn process_parsed_article(
 
     // Subsystem Identification and Linking
     let mut subsystems = identify_subsystems(&metadata.to, &metadata.cc, subsystem_mapping);
-    
+
     // Check paths for forge/git integrations
     if let Some(p) = patch_opt.as_ref() {
         let files = sashiko::baseline::extract_files_from_diff(&p.diff);
         let path_subsystems = identify_subsystems_from_paths(&files, subsystem_mapping);
         subsystems.extend(path_subsystems);
     }
-    
+
     if group.starts_with("git-import") || group == "git-fetch" {
         subsystems.push(("from git".to_string(), "git-import".to_string()));
     }
@@ -1031,11 +1037,11 @@ fn identify_subsystems(
         let mut matched = false;
 
         for rule in mapping {
-            if let Ok(re) = regex::Regex::new(&rule.pattern) {
-                if re.is_match(&lower_email) {
-                    subsystems.push((rule.name.clone(), lower_email.clone()));
-                    matched = true;
-                }
+            if let Ok(re) = regex::Regex::new(&rule.pattern)
+                && re.is_match(&lower_email)
+            {
+                subsystems.push((rule.name.clone(), lower_email.clone()));
+                matched = true;
             }
         }
 
@@ -1045,14 +1051,13 @@ fn identify_subsystems(
                 subsystems.push(("LKML".to_string(), lower_email));
             } else if lower_email.contains("netdev@vger.kernel.org") {
                 subsystems.push(("netdev".to_string(), lower_email));
-            } else if lower_email.ends_with("@vger.kernel.org")
+            } else if (lower_email.ends_with("@vger.kernel.org")
                 || lower_email.ends_with("@lists.linux.dev")
                 || lower_email.ends_with("@lists.infradead.org")
-                || lower_email.ends_with("@kvack.org")
+                || lower_email.ends_with("@kvack.org"))
+                && let Some(name) = lower_email.split('@').next()
             {
-                if let Some(name) = lower_email.split('@').next() {
-                    subsystems.push((name.to_string(), lower_email));
-                }
+                subsystems.push((name.to_string(), lower_email));
             }
         }
     }
@@ -1068,14 +1073,14 @@ fn identify_subsystems_from_paths(
     mapping: &[sashiko::settings::SubsystemMapping],
 ) -> Vec<(String, String)> {
     let mut subsystems = Vec::new();
-    
+
     for path in paths {
         let lower_path = path.to_lowercase();
         for rule in mapping {
-            if let Ok(re) = regex::Regex::new(&rule.pattern) {
-                if re.is_match(&lower_path) {
-                    subsystems.push((rule.name.clone(), rule.name.clone() + "@forge.local"));
-                }
+            if let Ok(re) = regex::Regex::new(&rule.pattern)
+                && re.is_match(&lower_path)
+            {
+                subsystems.push((rule.name.clone(), rule.name.clone() + "@forge.local"));
             }
         }
     }
@@ -1151,7 +1156,10 @@ mod tests {
         let to = "linux-usb@vger.kernel.org, random-user@example.com";
         let cc = "bpf@vger.kernel.org";
         let subsystems = identify_subsystems(to, cc, &[]);
-        assert!(subsystems.contains(&("linux-usb".to_string(), "linux-usb@vger.kernel.org".to_string())));
+        assert!(subsystems.contains(&(
+            "linux-usb".to_string(),
+            "linux-usb@vger.kernel.org".to_string()
+        )));
         assert!(subsystems.contains(&("bpf".to_string(), "bpf@vger.kernel.org".to_string())));
         // random-user should be ignored as it doesn't match list patterns
         assert_eq!(subsystems.len(), 2);

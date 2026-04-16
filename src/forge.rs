@@ -65,17 +65,17 @@ impl ForgeProvider for GitHubForge {
     fn parse_payload(&self, body: &Bytes) -> Result<(String, ForgeMetadata), StatusCode> {
         use serde_json::Value;
 
-        let payload: Value =
-            serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let payload: Value = serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
         let action = payload["action"]
             .as_str()
             .ok_or(StatusCode::BAD_REQUEST)?
             .to_string();
 
-        let pr = payload["pull_request"]
-            .as_object()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let pr = &payload["pull_request"];
+        if pr.is_null() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
 
         let head_sha = pr["head"]["sha"]
             .as_str()
@@ -87,9 +87,7 @@ impl ForgeProvider for GitHubForge {
             .ok_or(StatusCode::BAD_REQUEST)?
             .to_string();
 
-        let pr_number = pr["number"]
-            .as_i64()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let pr_number = pr["number"].as_i64().ok_or(StatusCode::BAD_REQUEST)?;
 
         let pr_title = pr["title"].as_str().map(|s| s.to_string());
         let pr_url = pr["html_url"].as_str().map(|s| s.to_string());
@@ -131,17 +129,17 @@ impl ForgeProvider for GitLabForge {
     fn parse_payload(&self, body: &Bytes) -> Result<(String, ForgeMetadata), StatusCode> {
         use serde_json::Value;
 
-        let payload: Value =
-            serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let payload: Value = serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
 
         let action = payload["object_kind"]
             .as_str()
             .ok_or(StatusCode::BAD_REQUEST)?
             .to_string();
 
-        let attrs = payload["object_attributes"]
-            .as_object()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let attrs = &payload["object_attributes"];
+        if attrs.is_null() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
 
         let head_sha = attrs["last_commit"]["id"]
             .as_str()
@@ -152,9 +150,7 @@ impl ForgeProvider for GitLabForge {
         // For now, use head_sha as placeholder
         let base_sha = head_sha.clone();
 
-        let pr_number = attrs["iid"]
-            .as_i64()
-            .ok_or(StatusCode::BAD_REQUEST)?;
+        let pr_number = attrs["iid"].as_i64().ok_or(StatusCode::BAD_REQUEST)?;
 
         let pr_title = attrs["title"].as_str().map(|s| s.to_string());
         let pr_url = attrs["url"].as_str().map(|s| s.to_string());

@@ -187,9 +187,9 @@ impl PromptRegistry {
             // Local path: resolve relative to cwd
             let path = PathBuf::from(directory);
             if path.is_absolute() {
-                return Ok(path);
+                Ok(path)
             } else {
-                return Ok(std::env::current_dir()?.join(path));
+                Ok(std::env::current_dir()?.join(path))
             }
         }
     }
@@ -232,8 +232,8 @@ impl PromptRegistry {
 
     /// Clone Git repository for prompts
     async fn clone_git_prompts(repo_url: &str) -> Result<PathBuf> {
-        use std::process::Command;
         use std::fs;
+        use std::process::Command;
 
         let cache_dir = PathBuf::from(".sashiko-cache/prompts");
         fs::create_dir_all(&cache_dir)?;
@@ -250,7 +250,7 @@ impl PromptRegistry {
         info!("Cloning prompts repository from {}", repo_url);
 
         let output = Command::new("git")
-            .args(&["clone", repo_url, cache_path.to_str().unwrap()])
+            .args(["clone", repo_url, cache_path.to_str().unwrap()])
             .output()?;
 
         if !output.status.success() {
@@ -377,32 +377,32 @@ impl PromptRegistry {
 
         // Check if custom stage config exists
         let mut custom_supporting_files = Vec::new();
-        if let Some(ref config) = self.stages_config {
-            if let Some(stage_def) = config.stages.iter().find(|s| s.number == stage) {
-                if !stage_def.enabled {
-                    // Stage disabled in config
-                    anyhow::bail!("Stage {} is disabled in configuration", stage);
-                }
+        if let Some(ref config) = self.stages_config
+            && let Some(stage_def) = config.stages.iter().find(|s| s.number == stage)
+        {
+            if !stage_def.enabled {
+                // Stage disabled in config
+                anyhow::bail!("Stage {} is disabled in configuration", stage);
+            }
 
-                // Load instruction from custom file if specified
-                if let Some(ref file) = stage_def.instruction_file {
-                    let instruction_path = self.base_dir.join(file);
-                    if let Ok(raw_content) = fs::read_to_string(&instruction_path).await {
-                        // Apply variable substitution
-                        let instruction = if let Some(ref vars) = self.variables {
-                            Self::substitute_variables(&raw_content, vars)
-                        } else {
-                            raw_content
-                        };
+            // Load instruction from custom file if specified
+            if let Some(ref file) = stage_def.instruction_file {
+                let instruction_path = self.base_dir.join(file);
+                if let Ok(raw_content) = fs::read_to_string(&instruction_path).await {
+                    // Apply variable substitution
+                    let instruction = if let Some(ref vars) = self.variables {
+                        Self::substitute_variables(&raw_content, vars)
+                    } else {
+                        raw_content
+                    };
 
-                        content.push_str(&instruction);
-                        clean.push_str(&instruction);
-                        content.push_str("\n\n");
-                        clean.push_str("\n\n");
+                    content.push_str(&instruction);
+                    clean.push_str(&instruction);
+                    content.push_str("\n\n");
+                    clean.push_str("\n\n");
 
-                        // Use custom supporting files
-                        custom_supporting_files = stage_def.supporting_files.clone();
-                    }
+                    // Use custom supporting files
+                    custom_supporting_files = stage_def.supporting_files.clone();
                 }
             }
         }

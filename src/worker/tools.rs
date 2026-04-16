@@ -95,10 +95,10 @@ impl ToolBox {
         };
 
         // Register custom tools if provided
-        if let Some(config) = tools_config {
-            if let Err(e) = toolbox.register_custom_tools(&config.custom) {
-                tracing::warn!("Failed to register custom tools: {}", e);
-            }
+        if let Some(config) = tools_config
+            && let Err(e) = toolbox.register_custom_tools(&config.custom)
+        {
+            tracing::warn!("Failed to register custom tools: {}", e);
         }
 
         toolbox
@@ -142,8 +142,14 @@ impl ToolBox {
             self.validate_tool_security(tool_def)?;
 
             // Parse parameter schema
-            let schema: serde_json::Value = serde_json::from_str(&tool_def.parameters)
-                .map_err(|e| anyhow!("Invalid parameter schema for tool '{}': {}", tool_def.name, e))?;
+            let schema: serde_json::Value =
+                serde_json::from_str(&tool_def.parameters).map_err(|e| {
+                    anyhow!(
+                        "Invalid parameter schema for tool '{}': {}",
+                        tool_def.name,
+                        e
+                    )
+                })?;
 
             // Create AiTool definition
             let ai_tool = AiTool {
@@ -160,7 +166,10 @@ impl ToolBox {
     }
 
     /// Validate custom tool security
-    fn validate_tool_security(&self, tool_def: &crate::settings::CustomToolDefinition) -> Result<()> {
+    fn validate_tool_security(
+        &self,
+        tool_def: &crate::settings::CustomToolDefinition,
+    ) -> Result<()> {
         // Check for dangerous patterns
         let dangerous_patterns = ["rm -rf", "sudo", "curl", "wget", "dd ", "mkfs"];
         for pattern in &dangerous_patterns {
@@ -229,9 +238,10 @@ impl ToolBox {
                             _ => continue,
                         };
 
-                        let is_allowed = tool_def.allowed_paths.iter().any(|allowed| {
-                            path_str.starts_with(allowed)
-                        });
+                        let is_allowed = tool_def
+                            .allowed_paths
+                            .iter()
+                            .any(|allowed| path_str.starts_with(allowed));
 
                         if !is_allowed {
                             anyhow::bail!(
