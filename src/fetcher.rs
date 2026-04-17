@@ -382,6 +382,7 @@ impl FetchAgent {
         // Check if remote exists
         let status = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
             .args(["remote", "get-url", name])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -392,6 +393,7 @@ impl FetchAgent {
             // Check if URL matches, if not update it
             let output = Command::new("git")
                 .current_dir(&self.repo_path)
+                .args(["-c", "safe.bareRepository=all"])
                 .args(["remote", "get-url", name])
                 .output()
                 .await?;
@@ -406,6 +408,7 @@ impl FetchAgent {
                 );
                 Command::new("git")
                     .current_dir(&self.repo_path)
+                    .args(["-c", "safe.bareRepository=all"])
                     .args(["remote", "set-url", name, url])
                     .output()
                     .await?;
@@ -414,6 +417,7 @@ impl FetchAgent {
             info!("Adding remote {} -> {}", name, redact_secret(url));
             let output = Command::new("git")
                 .current_dir(&self.repo_path)
+                .args(["-c", "safe.bareRepository=all"])
                 .args(["remote", "add", name, url])
                 .output()
                 .await?;
@@ -430,7 +434,10 @@ impl FetchAgent {
 
     async fn fetch_commits(&self, remote: &str, commits: &[String]) -> Result<()> {
         let mut cmd = Command::new("git");
-        cmd.current_dir(&self.repo_path).arg("fetch").arg(remote);
+        cmd.current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
+            .arg("fetch")
+            .arg(remote);
 
         for commit in commits {
             cmd.arg(commit);
@@ -449,6 +456,7 @@ impl FetchAgent {
     async fn fetch_all(&self, remote: &str) -> Result<()> {
         let output = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
             .args(["fetch", remote])
             .output()
             .await?;
@@ -463,15 +471,17 @@ impl FetchAgent {
     }
 
     async fn is_present(&self, commit_or_range: &str) -> bool {
+        let mut args = vec!["-c", "safe.bareRepository=all"];
         let arg_str: String;
-        let args = if let Some((start, end)) = commit_or_range.split_once("..") {
+
+        if let Some((start, end)) = commit_or_range.split_once("..") {
             // For ranges, ensure both endpoints are commits
-            arg_str = format!("{}^{{commit}}..{}^{{commit}}", start, end);
-            vec!["rev-list", "-n", "1", &arg_str]
+            arg_str = format!("{Start}^{{commit}}..{End}^{{commit}}", Start = start, End = end);
+            args.extend(["rev-list", "-n", "1", &arg_str]);
         } else {
             // For single commits, ensure it is a valid commit object
             arg_str = format!("{}^{{commit}}", commit_or_range);
-            vec!["rev-parse", "--verify", &arg_str]
+            args.extend(["rev-parse", "--verify", &arg_str]);
         };
 
         let output = Command::new("git")
@@ -489,7 +499,7 @@ impl FetchAgent {
                     info!(
                         "is_present: {} is missing or not a commit. stderr: {}",
                         commit_or_range,
-                        String::from_utf8_lossy(&s.stderr)
+                        String::from_utf8_lossy(&s.stderr).trim()
                     );
                 }
                 success
@@ -504,6 +514,7 @@ impl FetchAgent {
     async fn resolve_sha(&self, commit: &str) -> Result<String> {
         let output = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
             .args(["rev-parse", "--verify", commit])
             .output()
             .await?;
@@ -530,6 +541,7 @@ impl FetchAgent {
         // Resolve parent to use as base_commit
         let parent_output = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
             .args(["rev-parse", &format!("{}^", commit)])
             .output()
             .await?;
@@ -553,6 +565,7 @@ impl FetchAgent {
 
         let output = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(["-c", "safe.bareRepository=all"])
             .args(["show", &format!("--format={}", format), commit])
             .output()
             .await?;

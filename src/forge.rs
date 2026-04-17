@@ -92,8 +92,12 @@ impl ForgeProvider for GitHubForge {
         let pr_title = pr["title"].as_str().map(|s| s.to_string());
         let pr_url = pr["html_url"].as_str().map(|s| s.to_string());
 
+        let repo_url = payload["repository"]["clone_url"]
+            .as_str()
+            .map(|s| s.to_string());
+
         let metadata = ForgeMetadata {
-            repo_url: None,
+            repo_url,
             base_sha,
             head_sha,
             pr_number,
@@ -146,17 +150,23 @@ impl ForgeProvider for GitLabForge {
             .ok_or(StatusCode::BAD_REQUEST)?
             .to_string();
 
-        // For GitLab, base_sha might need to be fetched differently
-        // For now, use head_sha as placeholder
-        let base_sha = head_sha.clone();
+        // For GitLab, extract base_sha from diff_refs if available
+        let base_sha = attrs["diff_refs"]["base_sha"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| head_sha.clone());
 
         let pr_number = attrs["iid"].as_i64().ok_or(StatusCode::BAD_REQUEST)?;
 
         let pr_title = attrs["title"].as_str().map(|s| s.to_string());
         let pr_url = attrs["url"].as_str().map(|s| s.to_string());
 
+        let repo_url = payload["project"]["git_http_url"]
+            .as_str()
+            .map(|s| s.to_string());
+
         let metadata = ForgeMetadata {
-            repo_url: None,
+            repo_url,
             base_sha,
             head_sha,
             pr_number,
