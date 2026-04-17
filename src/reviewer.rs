@@ -1326,7 +1326,7 @@ async fn run_review_tool(
         "--worktree-dir",
         &settings.review.worktree_dir,
         "--prompts",
-        &settings.project.prompts_dir,
+        &settings.get_prompts_dir(),
         "--ai-provider",
         match settings.ai.provider.as_str() {
             "claude" | "stdio-claude" | "claude-cli" | "codex-cli" => "stdio-claude",

@@ -173,7 +173,8 @@ After:
 ```toml
 [project]
 name = "iproute2"
-prompts_dir = "third_party/prompts/iproute"
+[prompts]
+directory = "third_party/prompts/iproute"
 
 [prompts]
 directory = "third_party/prompts/iproute"
@@ -297,7 +298,6 @@ enabled = true
 ```toml
 [project]
 name = "my-project"
-prompts_dir = "custom/prompts"
 
 [prompts]
 directory = "custom/prompts"

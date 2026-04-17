@@ -137,18 +137,15 @@ impl PromptRegistry {
 
     /// Create a new PromptRegistry with PromptsSettings support
     pub async fn with_settings(
-        base_dir: PathBuf,
         settings: Option<&PromptsSettings>,
     ) -> Result<Self> {
         // Resolve directory (supports local/remote)
-        let resolved_dir = if let Some(prompts_settings) = settings {
-            if let Some(directory) = &prompts_settings.directory {
-                Self::resolve_prompts_directory(directory).await?
-            } else {
-                base_dir
-            }
+        let resolved_dir = if let Some(prompts_settings) = settings
+            && let Some(directory) = &prompts_settings.directory
+        {
+            Self::resolve_prompts_directory(directory).await?
         } else {
-            base_dir
+            PathBuf::from("third_party/prompts/kernel")
         };
 
         // Load stages config if specified

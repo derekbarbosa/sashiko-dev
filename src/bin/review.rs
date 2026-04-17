@@ -374,7 +374,10 @@ async fn main() -> Result<()> {
                         let provider = sashiko::ai::create_provider(&settings).expect("Failed to create AI provider");
 
                         // Enable read_prompt tool only if explicit caching is NOT used.
-                        let prompts_dir = args.prompts.clone().unwrap_or_else(|| PathBuf::from(&settings.project.prompts_dir));
+                        let prompts_dir = args
+                            .prompts
+                            .clone()
+                            .unwrap_or_else(|| PathBuf::from(settings.get_prompts_dir()));
                         let prompts_tool_path = Some(prompts_dir.join("tool.md"));
 
                         let tools = ToolBox::with_config(
@@ -385,7 +388,7 @@ async fn main() -> Result<()> {
 
                         // Use settings if available, otherwise fall back to args.prompts
                         let prompts = if settings.prompts.is_some() {
-                            PromptRegistry::with_settings(prompts_dir.clone(), settings.prompts.as_ref())
+                            PromptRegistry::with_settings(settings.prompts.as_ref())
                                 .await
                                 .expect("Failed to load prompts with settings")
                         } else {

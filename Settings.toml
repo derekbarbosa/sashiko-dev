@@ -3,7 +3,6 @@ log_level = "info"
 [project]
 name = "Sashiko (Linux Kernel)"
 description = "Sashiko is an agentic Linux kernel code review system. It monitors public mailing lists to thoroughly evaluate proposed Linux kernel changes."
-prompts_dir = "third_party/prompts/kernel"
 
 [forge]
 enabled = false

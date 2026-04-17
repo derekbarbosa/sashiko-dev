@@ -35,7 +35,6 @@ pub struct SubsystemsSettings {
 pub struct ProjectSettings {
     pub name: String,
     pub description: String,
-    pub prompts_dir: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -370,5 +369,12 @@ impl Settings {
             .build()?;
 
         s.try_deserialize()
+    }
+
+    pub fn get_prompts_dir(&self) -> String {
+        self.prompts
+            .as_ref()
+            .and_then(|p| p.directory.clone())
+            .unwrap_or_else(|| "third_party/prompts/kernel".to_string())
     }
 }
