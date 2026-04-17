@@ -1,13 +1,20 @@
+# Sashiko Configuration
+# Terse comments only. See docs/SETTINGS.md for full details.
+
 log_level = "info"
 
 [project]
 name = "Sashiko (Linux Kernel)"
-description = "Sashiko is an agentic Linux kernel code review system. It monitors public mailing lists to thoroughly evaluate proposed Linux kernel changes."
+description = "Agentic review system for Linux kernel mailing lists."
 
 [forge]
 enabled = false
+# provider = "github"
+# webhook_secret = "secret"
+# api_token = "token"
 
 [subsystems]
+# Regex map email -> subsystem name
 mapping = [
     { pattern = ".*linux-kernel@vger.kernel.org.*", name = "LKML" },
     { pattern = ".*netdev@vger.kernel.org.*", name = "netdev" },
@@ -22,6 +29,7 @@ url = "sashiko.db"
 token = ""
 
 [mailing_lists]
+# Lore list names to watch
 track = ["linux-kernel"]
 
 [nntp]
@@ -35,12 +43,6 @@ max_input_tokens = 900000
 max_interactions = 50
 temperature = 1.0
 
-# To use Claude Code CLI (fixed-cost subscription, no API key needed):
-# provider = "claude-cli"
-# model = "claude-sonnet-4-6"
-# max_input_tokens = 180000
-# max_interactions = 150
-
 [ai.claude]
 prompt_caching = true
 
@@ -49,6 +51,7 @@ host = "127.0.0.1"
 port = 8080
 
 [git]
+# Local path to target repository
 repository_path = "third_party/linux"
 
 [review]
@@ -58,30 +61,14 @@ timeout_seconds = 7200
 max_retries = 3
 ignore_files = ["MAINTAINERS", ".mailmap", ".gitignore", "LICENSES/"]
 
-# Optional: Configure available tools for AI agent
-# If omitted, all tools are enabled (default behavior)
-# [tools]
-# Whitelist mode: only enable specific tools
-# enabled = ["read_files", "git_diff", "git_log", "git_show", "search_file_content"]
-# Blacklist mode: disable specific tools (takes precedence over enabled)
-# disabled = ["git_checkout", "git_branch", "TodoWrite"]
+[tools]
+# enabled = ["read_files", "git_diff"]
+# disabled = ["TodoWrite"]
 
-# Optional: Configure prompts customization
-# If omitted, default prompts from third_party/prompts/kernel are used
-# [prompts]
-# Local directory override
-# directory = "/custom/prompts"
-# directory = "./my-prompts"
-
-# Remote URL (downloads and caches prompts)
-# directory = "https://example.com/sashiko-prompts"
-# directory = "git://github.com/user/sashiko-prompts.git"
-
-# Custom stages configuration
+[prompts]
+# directory = "third_party/prompts/kernel"
+# directory = "git://github.com/user/prompts.git"
 # stages_config = "stages.toml"
 
-# Template variables for prompt customization
-# [prompts.variables]
-# project_name = "My Custom Project"
-# custom_guidelines = "focus on security and performance"
-# subsystem_specific = "networking stack"
+[prompts.variables]
+# project_name = "Sashiko"
