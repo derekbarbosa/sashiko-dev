@@ -22,7 +22,7 @@ To request tracking for a new lore or NNTP mailing list, you can either:
 If you'd like to customize the review criteria or focus areas for your subsystem, you can provide subsystem-specific prompts. There are two ways to do this:
 
 1.  **Submit a Pull Request to this Repository:** Add your prompt markdown file directly into the [`third_party/prompts/kernel/subsystem/`](third_party/prompts/kernel/subsystem/) directory.
-2.  **Submit a Pull Request to Chris Mason's Repository:** Contribute your prompts upstream to Chris Mason's repository, which is periodically synced into Sashiko.
+2.  **Submit a Pull Request to Chris Mason's Repository:** Contribute your prompts upstream to [Chris Mason's repository](https://github.com/masoncl/review-prompts), which is periodically synced into Sashiko.
 
 > **Note:** Please keep your prompts small and focused. Avoid adding trivial facts or generic programming advice, as this only wastes the AI's context window and can degrade review quality.
 
