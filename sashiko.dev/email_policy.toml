@@ -48,6 +48,11 @@ cc = ["tytso@mit.edu"]
 lists = ["netdev@vger.kernel.org"]
 embargo_hours = 24
 
+[subsystems.cgroups]
+lists = ["cgroups@vger.kernel.org"]
+reply_to_author = true
+cc = ["tj@kernel.org", "hannes@cmpxchg.org", "mkoutny@suse.com"]
+
 [subsystems.renesas-soc]
 lists = ["linux-renesas-soc@vger.kernel.org"]
 cc = ["wsa+renesas@sang-engineering.com"]
