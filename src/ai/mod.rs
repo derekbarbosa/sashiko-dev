@@ -356,7 +356,6 @@ pub mod claude_cli;
 pub mod codex_cli;
 pub mod gemini;
 pub mod openai;
-pub mod patchset_summary;
 pub mod proxy;
 pub mod quota;
 pub mod token_budget;
