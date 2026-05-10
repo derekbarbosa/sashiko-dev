@@ -1177,10 +1177,10 @@ Example:
             };
             let _ = tx.send(msg).await;
 
-            // 3. Poll for response with timeout
+            // 3. Poll for response with timeout (extended to 60s for slow AI agents)
             if let Some(state_lock) = &self.ipc_state {
-                for _ in 0..10 {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                for _ in 0..60 {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     let state = state_lock.read().await;
                     if let Some(patch_id) = state.get(symbol) {
                         return json!({

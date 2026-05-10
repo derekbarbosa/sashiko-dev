@@ -1,9 +1,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use tokio::sync::broadcast;
+use tokio::sync::{RwLock, broadcast};
 use tracing::{error, info};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -30,6 +32,7 @@ pub enum IpcEvent {
 pub struct IpcBroker {
     listener: UnixListener,
     tx: broadcast::Sender<String>,
+    state: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl IpcBroker {
@@ -38,18 +41,27 @@ impl IpcBroker {
             tokio::fs::remove_file(sock_path).await?;
         }
         let listener = UnixListener::bind(sock_path)?;
-        let (tx, _) = broadcast::channel(100);
+        let (tx, _) = broadcast::channel(1000);
+        let state = Arc::new(RwLock::new(HashMap::new()));
 
         info!("IPC Broker started at {:?}", sock_path);
-        Ok(Self { listener, tx })
+        Ok(Self {
+            listener,
+            tx,
+            state,
+        })
     }
 
     pub async fn run(self) {
         let tx = self.tx;
+        let state = self.state;
+
         loop {
             if let Ok((mut stream, _)) = self.listener.accept().await {
                 let mut rx = tx.subscribe();
                 let tx_clone = tx.clone();
+                let state_clone = state.clone();
+
                 tokio::spawn(async move {
                     let (reader, mut writer) = stream.split();
                     let mut reader = BufReader::new(reader);
@@ -61,7 +73,33 @@ impl IpcBroker {
                                 match result {
                                     Ok(0) => break, // EOF
                                     Ok(_) => {
-                                        // Broadcast the line to all subscribers
+                                        // 1. Update internal state based on broadcast/response
+                                        if let Ok(msg) = serde_json::from_str::<IpcMessage>(&line) {
+                                            match &msg.event {
+                                                IpcEvent::Broadcast { symbol } | IpcEvent::Response { symbol, .. } => {
+                                                    let mut s = state_clone.write().await;
+                                                    s.insert(symbol.clone(), msg.patch_id.clone());
+                                                }
+                                                IpcEvent::Request { symbol } => {
+                                                    // 2. If Broker knows the answer, send it back directly to this client
+                                                    let s = state_clone.read().await;
+                                                    if let Some(pid) = s.get(symbol) {
+                                                        let response = IpcMessage {
+                                                            patch_id: pid.clone(),
+                                                            event: IpcEvent::Response {
+                                                                symbol: symbol.clone(),
+                                                                implementation_details: Some(format!("Broker cache: Found in Patch {}", pid)),
+                                                            }
+                                                        };
+                                                        if let Ok(resp_line) = serde_json::to_string(&response) {
+                                                            let _ = writer.write_all(format!("{}\n", resp_line).as_bytes()).await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // 3. Fan-out to all other subscribers
                                         let _ = tx_clone.send(line.clone());
                                         line.clear();
                                     }
