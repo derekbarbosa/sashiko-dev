@@ -16,6 +16,7 @@ use anyhow::Result;
 use clap::Parser;
 use sashiko::{
     git_ops::GitWorktree,
+    ipc::{IpcEvent, IpcMessage},
     settings::Settings,
     worker::{
         PatchInput, ReviewInput, Worker, WorkerConfig, calculate_series_range,
@@ -23,9 +24,13 @@ use sashiko::{
     },
 };
 use serde_json::json;
+use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use tracing::{error, info};
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -76,6 +81,10 @@ struct Args {
     /// Select which stages from 1-7 to run.
     #[arg(long, hide = true, value_delimiter = ',')]
     stages: Option<Vec<u8>>,
+
+    /// Unix Domain Socket path for IPC communication with other workers.
+    #[arg(long)]
+    ipc_sock: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -103,6 +112,59 @@ async fn main() -> Result<()> {
     }
 
     let args = Args::parse();
+
+    let mut ipc_tx_mpsc = None;
+    let ipc_state = Arc::new(RwLock::new(HashMap::<String, String>::new()));
+
+    if let Some(ref sock_path) = args.ipc_sock {
+        info!("Connecting to IPC broker at {:?}", sock_path);
+        match tokio::net::UnixStream::connect(sock_path).await {
+            Ok(stream) => {
+                let (reader, mut writer) = stream.into_split();
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<IpcMessage>(100);
+                ipc_tx_mpsc = Some(tx);
+                let state_clone = ipc_state.clone();
+
+                // Spawn IPC Reader
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(reader);
+                    let mut line = String::new();
+                    while let Ok(n) = reader.read_line(&mut line).await {
+                        if n == 0 {
+                            break;
+                        }
+                        if let Ok(msg) = serde_json::from_str::<IpcMessage>(&line) {
+                            match msg.event {
+                                IpcEvent::Broadcast { symbol }
+                                | IpcEvent::Response { symbol, .. } => {
+                                    let mut state = state_clone.write().await;
+                                    state.insert(symbol, msg.patch_id);
+                                }
+                                _ => {}
+                            }
+                        }
+                        line.clear();
+                    }
+                });
+
+                // Spawn IPC Writer
+                tokio::spawn(async move {
+                    while let Some(msg) = rx.recv().await {
+                        if let Ok(line) = serde_json::to_string(&msg) {
+                            let _ = writer.write_all(format!("{}\n", line).as_bytes()).await;
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to connect to IPC broker: {}. Continuing without IPC.",
+                    e
+                );
+            }
+        }
+    }
+
     let mut settings = Settings::new().expect("Failed to load settings");
 
     if let Some(p) = &args.ai_provider {
@@ -391,6 +453,8 @@ async fn main() -> Result<()> {
                                 custom_prompt: args.custom_prompt.clone(),
                                 series_range,
                                 stages: args.stages.clone(),
+                                ipc_tx: ipc_tx_mpsc.clone(),
+                                ipc_state: Some(ipc_state.clone()),
                             },
                         );
 

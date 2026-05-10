@@ -111,6 +111,8 @@ pub struct WorkerConfig {
     pub custom_prompt: Option<String>,
     pub series_range: Option<String>,
     pub stages: Option<Vec<u8>>,
+    pub ipc_tx: Option<tokio::sync::mpsc::Sender<crate::ipc::IpcMessage>>,
+    pub ipc_state: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>>,
 }
 
 pub struct WorkerResult {
@@ -412,6 +414,10 @@ pub struct Worker {
     series_range: Option<String>,
     context_tag: Option<String>,
     stages: Option<Vec<u8>>,
+    #[allow(dead_code)]
+    ipc_tx: Option<tokio::sync::mpsc::Sender<crate::ipc::IpcMessage>>,
+    #[allow(dead_code)]
+    ipc_state: Option<Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>>,
 }
 
 impl Worker {
@@ -431,6 +437,8 @@ impl Worker {
             series_range: config.series_range,
             context_tag: None,
             stages: config.stages,
+            ipc_tx: config.ipc_tx,
+            ipc_state: config.ipc_state,
         }
     }
 
@@ -1579,6 +1587,8 @@ mod tests {
             series_range: None,
             custom_prompt: None,
             stages: None,
+            ipc_tx: None,
+            ipc_state: None,
         };
         let mut worker = Worker::new(provider, tools, prompts, config);
 

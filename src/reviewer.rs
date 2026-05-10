@@ -482,6 +482,13 @@ impl Reviewer {
 
             let mut valid_jobs = Vec::new();
 
+            // Start IPC Broker
+            let ipc_sock_path =
+                std::env::temp_dir().join(format!("sashiko-review-{}.sock", patchset_id));
+            if let Ok(broker) = crate::ipc::IpcBroker::start(&ipc_sock_path).await {
+                tokio::spawn(broker.run());
+            }
+
             for (patch_id, index, diff, _subj, _auth, _date, _msg_id) in &diffs {
                 let mut should_skip = false;
 
@@ -559,6 +566,7 @@ impl Reviewer {
                     let baseline_ref_clone = baseline_ref_str.to_string();
                     let baseline_id_clone = baseline_id;
                     let embargo_until_clone = patchset.embargo_until;
+                    let ipc_sock_clone = ipc_sock_path.clone();
 
                     let handle = tokio::spawn(async move {
                         let mut failed = 0;
@@ -581,6 +589,7 @@ impl Reviewer {
                                     None, // Worker creates its OWN worktree!
                                     &job.diff,
                                     embargo_until_clone,
+                                    Some(&ipc_sock_clone),
                                 )
                                 .await
                                 {
@@ -628,6 +637,7 @@ impl Reviewer {
                         Some(&worktree.path),
                         &job.diff,
                         patchset.embargo_until,
+                        Some(&ipc_sock_path),
                     )
                     .await
                     {
@@ -649,6 +659,9 @@ impl Reviewer {
             if failed_patches > 0 {
                 review_success = false;
             }
+
+            // Cleanup IPC socket
+            let _ = tokio::fs::remove_file(&ipc_sock_path).await;
 
             // Cleanup worktree here since we kept it alive for reuse
             let _ = worktree.remove().await;
@@ -1015,6 +1028,7 @@ impl Reviewer {
         worktree_path: Option<&Path>,
         diff: &str,
         embargo_until: Option<i64>,
+        ipc_sock: Option<&Path>,
     ) -> Result<PatchResult> {
         info!(
             "Reviewing patch {}/{} (ID: {})",
@@ -1143,6 +1157,7 @@ impl Reviewer {
                 review_id,
                 worktree_path,
                 ctx.provider.clone(),
+                ipc_sock,
             )
             .await;
 
@@ -1479,6 +1494,7 @@ async fn run_review_tool(
     review_id: i64,
     worktree_path: Option<&Path>,
     provider: Arc<dyn AiProvider>,
+    ipc_sock: Option<&Path>,
 ) -> Result<serde_json::Value> {
     let mut cmd = if let Some(ref override_bin) = settings.review.review_tool_override {
         Command::new(override_bin)
@@ -1549,6 +1565,10 @@ async fn run_review_tool(
             .collect::<Vec<_>>()
             .join(",");
         cmd.arg("--stages").arg(stages_str);
+    }
+
+    if let Some(sock) = ipc_sock {
+        cmd.arg("--ipc-sock").arg(sock);
     }
 
     cmd.stdin(Stdio::piped());
@@ -2347,6 +2367,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
             None,
             diff_ignored,
             None,
+            None,
         )
         .await?;
 
@@ -2388,6 +2409,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
             None,
             diff_dir,
             None,
+            None,
         )
         .await?;
 
@@ -2423,6 +2445,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
             None,
             None,
             diff_mixed,
+            None,
             None,
         )
         .await;
@@ -2553,6 +2576,7 @@ echo '{"patchset_id": 1, "patches": [{"index": 1, "status": "applied"}]}'
             review_id,
             None,
             provider,
+            None,
         )
         .await
         .map(|_| ())
