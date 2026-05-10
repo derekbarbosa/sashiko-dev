@@ -198,12 +198,23 @@ impl ToolBox {
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "content": { "type": "string", "description": "The TODO item content." }
+                        "todo": { "type": "string", "description": "The TODO item text." }
                     },
-                    "required": ["content"]
+                    "required": ["todo"]
                 }),
             },
-        ];
+            AiTool {
+                name: "ask_other_patches".to_string(),
+                description: "Ask other parallel review workers if they implement or use a specific symbol (struct, function, macro).".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "symbol": { "type": "string", "description": "The name of the symbol to query." }
+                    },
+                    "required": ["symbol"]
+                }),
+            },
+            ];
 
         if self.prompts_path.is_some() {
             decls.push(AiTool {

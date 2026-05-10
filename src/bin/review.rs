@@ -24,7 +24,7 @@ use sashiko::{
     },
 };
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -87,6 +87,21 @@ struct Args {
     ipc_sock: Option<PathBuf>,
 }
 
+fn extract_symbols_from_diff(diff: &str) -> HashSet<String> {
+    let mut symbols = HashSet::new();
+    let re = regex::Regex::new(r"^\+(?:(?:static|extern)\s+)?(?:struct|enum|union|void|int|long|char|short|bool)\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+    for line in diff.lines() {
+        if line.starts_with('+')
+            && !line.starts_with("+++")
+            && let Some(caps) = re.captures(line)
+            && let Some(m) = caps.get(1)
+        {
+            symbols.insert(m.as_str().to_string());
+        }
+    }
+    symbols
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
@@ -113,6 +128,22 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    // Data Loading: Always from Stdin (JSON) to get patch_id and symbols early
+    let mut buffer = String::new();
+    let stdin = std::io::stdin();
+    stdin.read_line(&mut buffer)?;
+    let input: ReviewInput = serde_json::from_str(&buffer)?;
+
+    let (patchset_id, subject, patches) = (input.id, input.subject.clone(), input.patches.clone());
+    let patch_index = args.review_patch_index.unwrap_or(1);
+    let local_patch_id = patch_index.to_string();
+
+    let local_symbols = if let Some(p) = patches.iter().find(|p| p.index == patch_index) {
+        extract_symbols_from_diff(&p.diff)
+    } else {
+        HashSet::new()
+    };
+
     let mut ipc_tx_mpsc = None;
     let ipc_state = Arc::new(RwLock::new(HashMap::<String, String>::new()));
 
@@ -122,8 +153,11 @@ async fn main() -> Result<()> {
             Ok(stream) => {
                 let (reader, mut writer) = stream.into_split();
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<IpcMessage>(100);
-                ipc_tx_mpsc = Some(tx);
+                ipc_tx_mpsc = Some(tx.clone());
                 let state_clone = ipc_state.clone();
+                let local_patch_id_clone = local_patch_id.clone();
+                let local_symbols_clone = local_symbols.clone();
+                let tx_inner = tx.clone();
 
                 // Spawn IPC Reader
                 tokio::spawn(async move {
@@ -140,7 +174,21 @@ async fn main() -> Result<()> {
                                     let mut state = state_clone.write().await;
                                     state.insert(symbol, msg.patch_id);
                                 }
-                                _ => {}
+                                IpcEvent::Request { symbol } => {
+                                    if local_symbols_clone.contains(&symbol) {
+                                        let response = IpcMessage {
+                                            patch_id: local_patch_id_clone.clone(),
+                                            event: IpcEvent::Response {
+                                                symbol,
+                                                implementation_details: Some(format!(
+                                                    "Defined in Patch {}",
+                                                    local_patch_id_clone
+                                                )),
+                                            },
+                                        };
+                                        let _ = tx_inner.send(response).await;
+                                    }
+                                }
                             }
                         }
                         line.clear();
@@ -155,6 +203,16 @@ async fn main() -> Result<()> {
                         }
                     }
                 });
+
+                // Broadcast local symbols on startup
+                for symbol in local_symbols {
+                    let _ = tx
+                        .send(IpcMessage {
+                            patch_id: local_patch_id.clone(),
+                            event: IpcEvent::Broadcast { symbol },
+                        })
+                        .await;
+                }
             }
             Err(e) => {
                 warn!(
@@ -171,18 +229,6 @@ async fn main() -> Result<()> {
         settings.ai.provider = p.clone();
     }
 
-    // Data Loading: Always from Stdin (JSON)
-    let mut buffer = String::new();
-    if std::io::stdin().read_line(&mut buffer)? == 0 {
-        anyhow::bail!("No input provided on stdin");
-    }
-    let input: ReviewInput = serde_json::from_str(&buffer)?;
-
-    info!(
-        "Loaded patchset via JSON: {} (ID: {})",
-        input.subject, input.id
-    );
-    let (patchset_id, subject, patches) = (input.id, input.subject, input.patches);
     let baseline_arg = args.baseline.clone().unwrap_or_else(|| "HEAD".to_string());
     let repo_path = PathBuf::from(&settings.git.repository_path);
 

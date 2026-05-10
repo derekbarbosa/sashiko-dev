@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::ai::{AiMessage, AiProvider, AiRequest, AiResponseFormat, AiRole};
+use crate::ipc::{IpcEvent, IpcMessage};
 use crate::worker::tools::ToolBox;
 use anyhow::{Context, Result};
 
@@ -414,6 +415,7 @@ pub struct Worker {
     series_range: Option<String>,
     context_tag: Option<String>,
     stages: Option<Vec<u8>>,
+    patch_id: Option<String>,
     #[allow(dead_code)]
     ipc_tx: Option<tokio::sync::mpsc::Sender<crate::ipc::IpcMessage>>,
     #[allow(dead_code)]
@@ -437,6 +439,7 @@ impl Worker {
             series_range: config.series_range,
             context_tag: None,
             stages: config.stages,
+            patch_id: None,
             ipc_tx: config.ipc_tx,
             ipc_state: config.ipc_state,
         }
@@ -455,6 +458,7 @@ impl Worker {
             .as_i64()
             .map(|id| id.to_string())
             .unwrap_or_else(|| "multi".to_string());
+        self.patch_id = Some(p_id.clone());
         self.context_tag = Some(format!("[ps:{} p:{}] ", ps_id, p_id));
 
         if let Some(patches) = patchset["patches"].as_array() {
@@ -1142,6 +1146,62 @@ Example:
         Ok((parsed, t_in, t_out, t_cached))
     }
 
+    async fn handle_ask_other_patches(&self, symbol: &str) -> String {
+        if symbol.is_empty() {
+            return json!({"error": "Symbol name is required"}).to_string();
+        }
+
+        // 1. Check local IPC state (cached answers)
+        if let Some(state_lock) = &self.ipc_state {
+            let state = state_lock.read().await;
+            if let Some(patch_id) = state.get(symbol) {
+                return json!({
+                    "status": "found",
+                    "symbol": symbol,
+                    "location": format!("Patch {}", patch_id)
+                })
+                .to_string();
+            }
+        }
+
+        // 2. Broadcast request if we have a channel
+        if let Some(tx) = &self.ipc_tx {
+            let msg = IpcMessage {
+                patch_id: self
+                    .patch_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                event: IpcEvent::Request {
+                    symbol: symbol.to_string(),
+                },
+            };
+            let _ = tx.send(msg).await;
+
+            // 3. Poll for response with timeout
+            if let Some(state_lock) = &self.ipc_state {
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let state = state_lock.read().await;
+                    if let Some(patch_id) = state.get(symbol) {
+                        return json!({
+                            "status": "found",
+                            "symbol": symbol,
+                            "location": format!("Patch {}", patch_id)
+                        })
+                        .to_string();
+                    }
+                }
+            }
+        }
+
+        json!({
+            "status": "not_found",
+            "symbol": symbol,
+            "message": "Symbol not found in other parallel review processes yet."
+        })
+        .to_string()
+    }
+
     async fn run_ai_stage_raw(
         &mut self,
         _stage: u8,
@@ -1230,13 +1290,22 @@ Example:
             if let Some(tool_calls) = resp.tool_calls {
                 let mut tool_responses = Vec::new();
                 for call in tool_calls {
-                    let result = match self
-                        .tools
-                        .call(&call.function_name, call.arguments.clone())
-                        .await
-                    {
-                        Ok(v) => v.to_string(),
-                        Err(e) => json!({"error": e.to_string()}).to_string(),
+                    let result = if call.function_name == "ask_other_patches" {
+                        let symbol = call
+                            .arguments
+                            .get("symbol")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        self.handle_ask_other_patches(symbol).await
+                    } else {
+                        match self
+                            .tools
+                            .call(&call.function_name, call.arguments.clone())
+                            .await
+                        {
+                            Ok(v) => v.to_string(),
+                            Err(e) => json!({"error": e.to_string()}).to_string(),
+                        }
                     };
                     tool_responses.push(AiMessage {
                         role: AiRole::Tool,
