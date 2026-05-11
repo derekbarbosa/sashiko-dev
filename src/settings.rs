@@ -14,6 +14,40 @@
 
 use config::{Config, ConfigError, Environment, File};
 use serde::Deserialize;
+use std::path::PathBuf;
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct SubsystemMapping {
+    pub pattern: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct SubsystemsSettings {
+    #[serde(default)]
+    pub mapping: Vec<SubsystemMapping>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[allow(unused)]
+pub struct ProjectSettings {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct ForgeSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    pub provider: Option<String>,
+    pub webhook_secret: Option<String>,
+    pub api_token: Option<String>,
+}
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
@@ -326,10 +360,46 @@ fn default_log_level() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct CustomToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: String,
+    pub command: String,
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct ToolsSettings {
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    #[serde(default)]
+    pub disabled: Vec<String>,
+    #[serde(default)]
+    pub custom: Vec<CustomToolDefinition>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[allow(unused)]
+pub struct PromptsSettings {
+    pub directory: Option<String>,
+    pub stages_config: Option<PathBuf>,
+    #[serde(default)]
+    pub variables: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[allow(unused)]
 pub struct Settings {
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    #[serde(default)]
+    pub project: ProjectSettings,
+    #[serde(default = "default_subsystems")]
+    pub subsystems: SubsystemsSettings,
+    #[serde(default = "default_forge")]
+    pub forge: ForgeSettings,
     pub database: DatabaseSettings,
     pub nntp: NntpSettings,
     pub smtp: Option<SmtpSettings>,
@@ -338,6 +408,21 @@ pub struct Settings {
     pub server: ServerSettings,
     pub git: GitSettings,
     pub review: ReviewSettings,
+    pub tools: Option<ToolsSettings>,
+    pub prompts: Option<PromptsSettings>,
+}
+
+fn default_subsystems() -> SubsystemsSettings {
+    SubsystemsSettings { mapping: vec![] }
+}
+
+fn default_forge() -> ForgeSettings {
+    ForgeSettings {
+        enabled: false,
+        provider: None,
+        webhook_secret: None,
+        api_token: None,
+    }
 }
 
 impl Settings {
@@ -351,5 +436,12 @@ impl Settings {
             .build()?;
 
         s.try_deserialize()
+    }
+
+    pub fn get_prompts_dir(&self) -> String {
+        self.prompts
+            .as_ref()
+            .and_then(|p| p.directory.clone())
+            .unwrap_or_else(|| "third_party/prompts/kernel".to_string())
     }
 }
