@@ -246,6 +246,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 failed_error: Some(error),
                                 skip_filters: None,
                                 only_filters: None,
+                                mr_url: None,
+                                mr_title: None,
+                                mr_number: None,
                             })
                             .await
                         {
@@ -264,6 +267,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         timestamp,
                         index,
                         total,
+                        mr_url: _,
+                        mr_title: _,
+                        mr_number: _,
                     } => {
                         let root_msg_id = format!("{}@sashiko.local", article_id);
 
@@ -309,6 +315,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 failed_error: None,
                                 skip_filters: None,
                                 only_filters: None,
+                                mr_url: None,
+                                mr_title: None,
+                                mr_number: None,
                             })
                             .await
                         {
@@ -368,6 +377,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             failed_error: None,
                                             skip_filters: skip_subjects_clone,
                                             only_filters: only_subjects_clone,
+                                            mr_url: None,
+                                            mr_title: None,
+                                            mr_number: None,
                                         })
                                         .await
                                     {
@@ -422,6 +434,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         failed_error: None,
                                         skip_filters: None,
                                         only_filters: None,
+                                        mr_url: None,
+                                        mr_title: None,
+                                        mr_number: None,
                                     })
                                     .await
                                 {
@@ -600,6 +615,9 @@ async fn process_parsed_article(
         failed_error,
         skip_filters,
         only_filters,
+        mr_url: _,
+        mr_title: _,
+        mr_number: _,
     } = article;
 
     // Handle ingestion failure

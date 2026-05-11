@@ -48,6 +48,7 @@ pub struct PatchsetRow {
     pub findings_high: Option<i64>,
     pub findings_critical: Option<i64>,
     pub baseline_id: Option<i64>,
+    pub slug: Option<String>,
     pub failed_reason: Option<String>,
     pub skip_filters: Option<String>,
     pub only_filters: Option<String>,
@@ -58,6 +59,9 @@ pub struct PatchsetRow {
     pub provider: Option<String>,
     #[serde(skip)]
     pub embargo_until: Option<i64>,
+    pub mr_url: Option<String>,
+    pub mr_title: Option<String>,
+    pub mr_number: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -480,6 +484,11 @@ impl Database {
                 "patchsets",
                 "status, embargo_until",
             )
+            .await;
+        let _ = self.try_add_column("patchsets", "mr_url", "TEXT").await;
+        let _ = self.try_add_column("patchsets", "mr_title", "TEXT").await;
+        let _ = self
+            .try_add_column("patchsets", "mr_number", "INTEGER")
             .await;
 
         let _ = self
@@ -2256,7 +2265,7 @@ impl Database {
         let sql = format!(
             "SELECT p.id, p.subject, p.status, p.thread_id, p.author, p.date, p.cover_letter_message_id, p.total_parts, p.received_parts, GROUP_CONCAT(s.name, ','),
              COALESCE(f.low, 0), COALESCE(f.medium, 0), COALESCE(f.high, 0), COALESCE(f.critical, 0), p.baseline_id, p.failed_reason, p.target_review_count, p.skip_filters, p.only_filters,
-             p.embargo_until
+             p.embargo_until, p.mr_url, p.mr_title, p.mr_number, p.slug
              FROM patchsets p
              LEFT JOIN patchsets_subsystems ps ON p.id = ps.patchset_id
              LEFT JOIN subsystems s ON ps.subsystem_id = s.id
@@ -2352,6 +2361,10 @@ impl Database {
                         baseline_logs: None,
                         provider: None,
                         embargo_until: row.get(19).ok(),
+                        mr_url: row.get(20).ok(),
+                        mr_title: row.get(21).ok(),
+                        mr_number: row.get(22).ok(),
+                        slug: row.get(23).ok(),
                     });
                 }
                 Ok(None) => break,
@@ -2493,7 +2506,7 @@ impl Database {
                     p.author, p.date, p.cover_letter_message_id, p.thread_id,
                     p.total_parts, p.received_parts, p.failed_reason,
                     p.model_name, p.prompts_git_hash, p.baseline_logs, p.baseline_id, p.provider,
-                    p.embargo_until
+                    p.embargo_until, p.mr_url, p.slug
                 FROM patchsets p
                 WHERE p.id = ?",
                 libsql::params![id],
@@ -2519,6 +2532,8 @@ impl Database {
             let baseline_id: Option<i64> = row.get(15).ok();
             let provider: Option<String> = row.get(16).ok();
             let embargo_until: Option<i64> = row.get(17).ok();
+            let mr_url: Option<String> = row.get(18).ok();
+            let slug: Option<String> = row.get(19).ok();
             // Fetch baseline details if needed
             let baseline = if let Some(bid) = baseline_id {
                 let mut browse = self
@@ -2714,7 +2729,9 @@ impl Database {
                 "baseline_logs": baseline_logs,
                 "baseline": baseline,
                 "provider": provider,
-                "embargo_until": embargo_until
+                "embargo_until": embargo_until,
+                "mr_url": mr_url,
+                "slug": slug
             })))
         } else {
             Ok(None)
@@ -2734,7 +2751,7 @@ impl Database {
                     p.author, p.date, p.cover_letter_message_id, p.thread_id,
                     p.total_parts, p.received_parts, p.failed_reason,
                     p.model_name, p.prompts_git_hash, p.baseline_logs, p.baseline_id, p.provider,
-                    p.embargo_until
+                    p.embargo_until, p.mr_url, p.slug
                 FROM patchsets p
                 WHERE p.id = ?",
                 libsql::params![id],
@@ -2760,6 +2777,8 @@ impl Database {
             let baseline_id: Option<i64> = row.get(15).ok();
             let provider: Option<String> = row.get(16).ok();
             let embargo_until: Option<i64> = row.get(17).ok();
+            let mr_url: Option<String> = row.get(18).ok();
+            let slug: Option<String> = row.get(19).ok();
             let baseline = if let Some(bid) = baseline_id {
                 let mut browse = self
                     .conn
@@ -2949,7 +2968,9 @@ impl Database {
                 "baseline_logs": baseline_logs,
                 "baseline": baseline,
                 "provider": provider,
-                "embargo_until": embargo_until
+                "embargo_until": embargo_until,
+                "mr_url": mr_url,
+                "slug": slug
             })))
         } else {
             Ok(None)
@@ -2979,6 +3000,48 @@ impl Database {
             .query(
                 "SELECT patchset_id FROM patches WHERE message_id = ?",
                 libsql::params![msg_id],
+            )
+            .await?;
+        if let Ok(Some(row)) = rows.next().await {
+            let id: i64 = row.get(0)?;
+            return self.get_patchset_summary(id, page, limit).await;
+        }
+
+        Ok(None)
+    }
+
+    pub async fn get_patchset_details_by_slug(
+        &self,
+        slug: &str,
+        page: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<Option<serde_json::Value>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id FROM patchsets WHERE slug = ?",
+                libsql::params![slug],
+            )
+            .await?;
+        if let Ok(Some(row)) = rows.next().await {
+            let id: i64 = row.get(0)?;
+            return self.get_patchset_details(id, page, limit).await;
+        }
+
+        Ok(None)
+    }
+
+    pub async fn get_patchset_summary_by_slug(
+        &self,
+        slug: &str,
+        page: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<Option<serde_json::Value>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT id FROM patchsets WHERE slug = ?",
+                libsql::params![slug],
             )
             .await?;
         if let Ok(Some(row)) = rows.next().await {
@@ -3086,7 +3149,7 @@ impl Database {
 
     pub async fn get_pending_patchsets(&self, limit: usize) -> Result<Vec<PatchsetRow>> {
         let mut rows = self.conn.query(
-            "SELECT id, subject, status, thread_id, author, date, cover_letter_message_id, total_parts, received_parts, baseline_id, failed_reason, target_review_count, skip_filters, only_filters, embargo_until
+            "SELECT id, subject, status, thread_id, author, date, cover_letter_message_id, total_parts, received_parts, baseline_id, failed_reason, target_review_count, skip_filters, only_filters, embargo_until, slug
              FROM patchsets WHERE status = 'Pending' ORDER BY date ASC LIMIT ?",
             libsql::params![limit as i64],
         ).await?;
@@ -3118,6 +3181,10 @@ impl Database {
                 baseline_logs: None,
                 provider: None,
                 embargo_until: row.get(14).ok(),
+                mr_url: None,
+                mr_title: None,
+                mr_number: None,
+                slug: row.get(15).ok(),
             });
         }
         Ok(patchsets)
@@ -3170,6 +3237,10 @@ impl Database {
                         baseline_logs: None,
                         provider: None,
                         embargo_until: row.get(14).ok(),
+                        mr_url: None,
+                        mr_title: None,
+                        mr_number: None,
+                        slug: None,
                     });
                 }
                 Ok(None) => break,
@@ -3336,12 +3407,17 @@ impl Database {
         self.rerun_patchset(patchset_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_fetching_patchset(
         &self,
         article_id: &str,
         subject: &str,
         skip_filters: Option<&Vec<String>>,
         only_filters: Option<&Vec<String>>,
+        mr_url: Option<&str>,
+        mr_title: Option<&str>,
+        mr_number: Option<i64>,
+        slug: Option<&str>,
     ) -> Result<i64> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -3376,8 +3452,8 @@ impl Database {
                 // We don't want to reset if it is already Incomplete, Pending, or Reviewed.
                 if status == "Failed" || status == "Fetching" {
                     self.conn.execute(
-                        "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL, skip_filters = ?, only_filters = ? WHERE id = ?",
-                        libsql::params![skip_filters_json.clone(), only_filters_json.clone(), id]
+                        "UPDATE patchsets SET status = 'Fetching', failed_reason = NULL, skip_filters = ?, only_filters = ?, mr_url = ?, mr_title = ?, mr_number = ?, slug = ? WHERE id = ?",
+                        libsql::params![skip_filters_json.clone(), only_filters_json.clone(), mr_url, mr_title, mr_number, slug, id]
                     ).await?;
                 }
                 return Ok(id);
@@ -3390,9 +3466,9 @@ impl Database {
         // 3. Create the fetching patchset
         let mut rows = self.conn
             .query(
-                "INSERT INTO patchsets (thread_id, cover_letter_message_id, subject, status, date, skip_filters, only_filters) 
-                     VALUES (?, ?, ?, 'Fetching', ?, ?, ?) RETURNING id",
-                libsql::params![thread_id, root_msg_id, subject, now, skip_filters_json, only_filters_json],
+                "INSERT INTO patchsets (thread_id, cover_letter_message_id, subject, status, date, skip_filters, only_filters, mr_url, mr_title, mr_number, slug)
+                     VALUES (?, ?, ?, 'Fetching', ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                libsql::params![thread_id, root_msg_id, subject, now, skip_filters_json, only_filters_json, mr_url, mr_title, mr_number, slug],
             )
             .await?;
 
