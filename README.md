@@ -19,10 +19,11 @@ Please, note that as with any other LLM-based tools, Sashiko's output is probabi
 
 ## Features
 
-- **Automated Ingestion**: Monitors mailing lists (using `lore.kernel.org`) for new patch submissions.
-- **Manual Ingestion**: Can ingest patches from a local git repository.
-- **Self-contained**: Doesn't depend on 3rd-party tools and can work with various LLM providers (Gemini and Claude are currently supported).
-- **Web interface and CLI**: Provides a web interface and a CLI tool. Email support will be added soon.
+- **Automated Ingestion**: Monitors mailing lists (`lore.kernel.org`), GitHub PRs, and GitLab MRs for new patch submissions.
+- **Manual Ingestion**: Can ingest patches from local git repositories or specific PRs/MRs.
+- **Forge Integration**: Automatic PR/MR review via GitHub and GitLab webhooks.
+- **Self-contained**: Doesn't depend on 3rd-party tools and works with multiple LLM providers (Gemini and Claude currently supported).
+- **Web interface and CLI**: Provides a web interface for monitoring and a CLI tool for local development.
 
 ## Prompts
 
@@ -90,6 +91,10 @@ cargo install sashiko
     *   **Server**: API server host and port.
     *   **Git**: Path to the reference kernel repository.
     *   **Review**: Concurrency and worktree settings.
+    *   **Tools**: Configure which AI tools are enabled (optional). See [docs/TOOLS.md](docs/TOOLS.md) for details.
+    *   **Forge**: GitHub/GitLab webhook integration (optional). See forge setup guides below.
+    *   **Prompts**: Customize review stages and prompts (optional). See [docs/PROMPTS.md](docs/PROMPTS.md) for details.
+    *   **Subsystems**: Map file patterns to subsystems for targeted reviews (optional).
 
     ### Configuring the LLM Provider
 
