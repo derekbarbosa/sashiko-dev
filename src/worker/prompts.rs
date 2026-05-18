@@ -735,6 +735,7 @@ If you find concerns, each must be an object with:
 - "description": A clear description of the problem.
 - "reasoning": A step-by-step explanation.
 - "preexisting": A boolean value: `true` if this bug/vulnerability already existed in the codebase before these patches were applied, or `false` if the issue was newly introduced by the reviewed patchset.
+- "locations": An array of objects, each containing "file", "function/symbol", and "code_snippet" strings.
 
 CRITICAL REVIEW DIRECTIVE: Do NOT dismiss concerns just because you assume the surrounding system or caller handles it perfectly. Do not be overly charitable to the existing code. If there is a missing initialization, an unhandled edge case, or a brittle logic flow, report it as a concern immediately. Assume the worst-case scenario where external inputs and caller states are malformed.
 
@@ -746,7 +747,14 @@ Example:
       "type": "Issue Category",
       "description": "What is wrong.",
       "reasoning": "Why it is wrong.",
-      "preexisting": false
+      "preexisting": false,
+      "locations": [
+        {
+          "file": "path/to/file.c",
+          "function/symbol": "function_name",
+          "code_snippet": "problematic_code();"
+        }
+      ]
     }
   ]
 }
