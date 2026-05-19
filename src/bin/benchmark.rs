@@ -46,6 +46,10 @@ struct Args {
     /// Override the default repo URL (default: kernel.org linux.git)
     #[arg(short, long)]
     repo: Option<String>,
+
+    /// Only run the evaluation phase on existing DB results, skipping ingestion and waiting
+    #[arg(long)]
+    analyze_only: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -111,108 +115,110 @@ async fn main() -> Result<()> {
     let total_entries = benchmark_entries.len();
     info!("Loaded {} benchmark entries.", total_entries);
 
-    let port = args.port.unwrap_or(settings.server.port);
-    let repo_url = args.repo.clone().unwrap_or_else(|| {
-        "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git".to_string()
-    });
+    if !args.analyze_only {
+        let port = args.port.unwrap_or(settings.server.port);
+        let repo_url = args.repo.clone().unwrap_or_else(|| {
+            "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git".to_string()
+        });
 
-    let target_url = if settings.server.host.contains(':') {
-        format!("http://[::1]:{}/api/submit", port)
-    } else {
-        format!("http://{}:{}/api/submit", settings.server.host, port)
-    };
-    let client = Client::new();
-
-    // --- Phase 1: Ingestion ---
-    info!("--- Phase 1: Ingesting Patches ---");
-    for entry in &benchmark_entries {
-        info!("Submitting commit: {}", entry.commit);
-        let payload = SubmitRequest::Remote {
-            sha: entry.commit.clone(),
-            repo: repo_url.clone(),
+        let target_url = if settings.server.host.contains(':') {
+            format!("http://[::1]:{}/api/submit", port)
+        } else {
+            format!("http://{}:{}/api/submit", settings.server.host, port)
         };
+        let client = Client::new();
 
-        let res = client.post(&target_url).json(&payload).send().await;
-        match res {
-            Ok(response) => {
-                if response.status().is_success() {
-                    info!("Successfully submitted {}", entry.commit);
-                } else {
-                    let status = response.status();
-                    let text = response.text().await.unwrap_or_default();
-                    error!(
-                        "Failed to submit {}: Status {} Body: {}",
-                        entry.commit, status, text
-                    );
-                }
-            }
-            Err(e) => {
-                error!("Failed to send request for {}: {}", entry.commit, e);
-            }
-        }
-    }
-
-    // --- Phase 2: Wait for Reviews to Finish ---
-    info!("--- Phase 2: Waiting for Reviews to Complete ---");
-    loop {
-        let mut all_completed = true;
-        let mut missing_patches = 0;
-        let mut pending_reviews = 0;
-        let mut completed_reviews = 0;
-
+        // --- Phase 1: Ingestion ---
+        info!("--- Phase 1: Ingesting Patches ---");
         for entry in &benchmark_entries {
-            // Find patch ID
-            let mut rows = db
-                .conn
-                .query(
-                    "SELECT id FROM patches WHERE message_id = ?",
-                    libsql::params![entry.commit.clone()],
-                )
-                .await?;
-
-            let patch_id = if let Ok(Some(row)) = rows.next().await {
-                row.get::<i64>(0).unwrap_or_default()
-            } else {
-                // Patch not found yet (maybe still downloading/parsing)
-                all_completed = false;
-                missing_patches += 1;
-                continue;
+            info!("Submitting commit: {}", entry.commit);
+            let payload = SubmitRequest::Remote {
+                sha: entry.commit.clone(),
+                repo: repo_url.clone(),
             };
 
-            // Check review status
-            let mut rows = db
-                .conn
-                .query(
-                    "SELECT status FROM reviews WHERE patch_id = ? ORDER BY id DESC LIMIT 1",
-                    libsql::params![patch_id],
-                )
-                .await?;
-
-            if let Ok(Some(row)) = rows.next().await {
-                let status: String = row.get(0).unwrap_or_default();
-                if status == "Pending" || status == "In Review" {
-                    all_completed = false;
-                    pending_reviews += 1;
-                } else {
-                    completed_reviews += 1;
+            let res = client.post(&target_url).json(&payload).send().await;
+            match res {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        info!("Successfully submitted {}", entry.commit);
+                    } else {
+                        let status = response.status();
+                        let text = response.text().await.unwrap_or_default();
+                        error!(
+                            "Failed to submit {}: Status {} Body: {}",
+                            entry.commit, status, text
+                        );
+                    }
                 }
-            } else {
-                // No review created yet
-                all_completed = false;
-                pending_reviews += 1;
+                Err(e) => {
+                    error!("Failed to send request for {}: {}", entry.commit, e);
+                }
             }
         }
 
-        if all_completed {
-            info!("All {} patches have been reviewed.", total_entries);
-            break;
-        }
+        // --- Phase 2: Wait for Reviews to Finish ---
+        info!("--- Phase 2: Waiting for Reviews to Complete ---");
+        loop {
+            let mut all_completed = true;
+            let mut missing_patches = 0;
+            let mut pending_reviews = 0;
+            let mut completed_reviews = 0;
 
-        info!(
-            "Waiting... Completed: {}, Pending: {}, Missing Patches: {}",
-            completed_reviews, pending_reviews, missing_patches
-        );
-        sleep(Duration::from_secs(5)).await;
+            for entry in &benchmark_entries {
+                // Find patch ID
+                let mut rows = db
+                    .conn
+                    .query(
+                        "SELECT id FROM patches WHERE message_id = ?",
+                        libsql::params![entry.commit.clone()],
+                    )
+                    .await?;
+
+                let patch_id = if let Ok(Some(row)) = rows.next().await {
+                    row.get::<i64>(0).unwrap_or_default()
+                } else {
+                    // Patch not found yet (maybe still downloading/parsing)
+                    all_completed = false;
+                    missing_patches += 1;
+                    continue;
+                };
+
+                // Check review status
+                let mut rows = db
+                    .conn
+                    .query(
+                        "SELECT status FROM reviews WHERE patch_id = ? ORDER BY id DESC LIMIT 1",
+                        libsql::params![patch_id],
+                    )
+                    .await?;
+
+                if let Ok(Some(row)) = rows.next().await {
+                    let status: String = row.get(0).unwrap_or_default();
+                    if status == "Pending" || status == "In Review" {
+                        all_completed = false;
+                        pending_reviews += 1;
+                    } else {
+                        completed_reviews += 1;
+                    }
+                } else {
+                    // No review created yet
+                    all_completed = false;
+                    pending_reviews += 1;
+                }
+            }
+
+            if all_completed {
+                info!("All {} patches have been reviewed.", total_entries);
+                break;
+            }
+
+            info!(
+                "Waiting... Completed: {}, Pending: {}, Missing Patches: {}",
+                completed_reviews, pending_reviews, missing_patches
+            );
+            sleep(Duration::from_secs(5)).await;
+        }
     }
 
     // --- Phase 3: Evaluate Results ---
