@@ -886,9 +886,17 @@ impl Reviewer {
                     );
 
                     // Try git am
-                    if (worktree.apply_patch(&mbox).await).is_ok() {
-                        applied = true;
-                    } else {
+                    match worktree.apply_patch(&mbox).await {
+                        Ok(_) => applied = true,
+                        Err(e) => {
+                            warn!(
+                                "git am failed for patch {}/{} (ID: {}): {}",
+                                patchset_id, index, patch_id, e
+                            );
+                        }
+                    }
+
+                    if !applied {
                         // Fallback raw diff
                         if let Ok(output) = worktree.apply_raw_diff(diff).await
                             && output.status.success()
@@ -942,6 +950,10 @@ impl Reviewer {
                 } else {
                     let msg = format!(
                         "Patch {}/{} (ID: {}) failed to apply.\n",
+                        patchset_id, index, patch_id
+                    );
+                    warn!(
+                        "All apply methods failed for patch {}/{} (ID: {})",
                         patchset_id, index, patch_id
                     );
                     apply_logs.push_str(&msg);
