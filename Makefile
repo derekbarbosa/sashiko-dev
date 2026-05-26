@@ -1,7 +1,7 @@
 # Sashiko Development and CI Tasks
 
-.PHONY: help check-pr check-integration check-all sob lint fmt test integration-test
-.PHONY: docs docs-serve audit build clean
+.PHONY: help build fmt lint test docs docs-serve audit clean
+.PHONY: check-pr check-integration check-all sob integration-test
 
 # Default target
 .DEFAULT_GOAL := help
@@ -22,12 +22,11 @@ help:
 	@echo ""
 	@echo "  CI Suites:"
 	@echo "    check-pr          - Run all PR checks (SOB, Lint, Unit Tests)"
-	@echo "    check-integration - Run integration tests"
+	@echo "    check-integration - Run integration tests (server + API)"
 	@echo "    check-all         - Run the complete check suite (PR + Integration)"
 	@echo ""
 	@echo "  Utilities:"
 	@echo "    sob               - Check Signed-off-by tags (RANGE=HEAD~1..HEAD)"
-	@echo "    integration-test  - [Slow] Run integration tests using benchmarks"
 
 # ── Development ──────────────────────────────────────────
 
@@ -71,7 +70,7 @@ clean:
 # [PR Suite] Run all checks required for a Pull Request (SOB, Lint, Unit Tests)
 check-pr: sob lint test
 
-# [Integration Suite] Run the full integration tests
+# [Integration Suite] Run #[ignore]-tagged integration tests (server + API)
 check-integration: integration-test
 
 # Run the complete check suite (PR + Integration)
@@ -84,6 +83,6 @@ RANGE ?= HEAD~1..HEAD
 sob:
 	@./scripts/check-sob.sh "$(RANGE)"
 
-# [Slow] Run integration tests using benchmarks
+# Run #[ignore]-tagged integration tests (spins up real HTTP servers)
 integration-test:
-	@./scripts/integration-test.sh
+	@cargo test --release --test integration_tests -- --ignored
