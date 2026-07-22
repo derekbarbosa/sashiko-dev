@@ -191,7 +191,7 @@ pub struct SubsystemQuery {
 
 #[derive(Deserialize)]
 pub struct CancelQuery {
-    pub id: i64,
+    pub id: String,
     #[serde(default)]
     pub force: bool,
 }
@@ -1030,6 +1030,30 @@ async fn stats_tools(
     Ok(Json(data))
 }
 
+/// Resolve a flexible patchset identifier (numeric ID, slug, or
+/// message-ID) to a numeric database ID.
+async fn resolve_patchset_id(db: &crate::db::Database, id_str: &str) -> Result<i64, StatusCode> {
+    if let Ok(id) = id_str.parse::<i64>() {
+        return Ok(id);
+    }
+    // Slug: contains '-' but no '@'.
+    if id_str.contains('-') && !id_str.contains('@') {
+        if let Ok(Some(details)) = db.get_patchset_details_by_slug(id_str, None, None).await
+            && let Some(id) = details.get("id").and_then(|v| v.as_i64())
+        {
+            return Ok(id);
+        }
+        return Err(StatusCode::NOT_FOUND);
+    }
+    // Fall back to message-ID lookup.
+    if let Ok(Some(details)) = db.get_patchset_details_by_msgid(id_str, None, None).await
+        && let Some(id) = details.get("id").and_then(|v| v.as_i64())
+    {
+        return Ok(id);
+    }
+    Err(StatusCode::NOT_FOUND)
+}
+
 async fn rerun_patchset(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
@@ -1043,10 +1067,7 @@ async fn rerun_patchset(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let id = query
-        .id
-        .parse::<i64>()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let id = resolve_patchset_id(&state.db, &query.id).await?;
 
     state.db.rerun_patchset(id).await.map_err(|e| {
         error!("Failed to rerun patchset {}: {}", id, e);
@@ -1069,17 +1090,19 @@ async fn cancel_patchset(
         return Err(StatusCode::FORBIDDEN);
     }
 
+    let id = resolve_patchset_id(&state.db, &query.id).await?;
+
     let cancelled = state
         .db
-        .cancel_patchset(query.id, query.force)
+        .cancel_patchset(id, query.force)
         .await
         .map_err(|e| {
-            error!("Failed to cancel patchset {}: {}", query.id, e);
+            error!("Failed to cancel patchset {}: {}", id, e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     if cancelled {
-        info!("Patchset {} cancelled (force={})", query.id, query.force);
+        info!("Patchset {} cancelled (force={})", id, query.force);
         Ok(Json(serde_json::json!({ "status": "cancelled" })))
     } else {
         let reason = if query.force {
