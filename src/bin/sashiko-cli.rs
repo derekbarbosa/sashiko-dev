@@ -150,13 +150,13 @@ enum Commands {
     },
     /// Request a re-review of a completed patchset
     Rerun {
-        /// ID of the patchset to re-review
-        id: i64,
+        /// Patchset ID, slug, or message-ID to re-review
+        id: String,
     },
     /// Cancel a pending review
     Cancel {
-        /// ID of the patchset to cancel
-        id: i64,
+        /// Patchset ID, slug, or message-ID to cancel
+        id: String,
 
         /// Force cancel even if the review is already in progress
         #[arg(long, short)]
@@ -316,8 +316,8 @@ async fn run_command(
             };
             handle_show(client, base_url, id, watch, format, opts).await
         }
-        Commands::Rerun { id } => handle_rerun(client, base_url, id, format).await,
-        Commands::Cancel { id, force } => handle_cancel(client, base_url, id, force, format).await,
+        Commands::Rerun { id } => handle_rerun(client, base_url, &id, format).await,
+        Commands::Cancel { id, force } => handle_cancel(client, base_url, &id, force, format).await,
         Commands::Local {
             input,
             baseline,
@@ -368,6 +368,12 @@ async fn handle_submit(
                 (SubmitType::Mbox, s)
             } else if s.contains("..") {
                 (SubmitType::Range, s)
+            } else if sashiko::lore::is_lore_url(&s) {
+                let msgid =
+                    sashiko::lore::extract_message_id_from_lore_url(&s).ok_or_else(|| {
+                        anyhow::anyhow!("Could not extract message-ID from lore URL: {}", s)
+                    })?;
+                (SubmitType::Thread, msgid)
             } else if s.contains('@') && !s.contains('/') && !s.contains('\\') {
                 // If it looks like an email address/msgid and doesn't look like a path, assume Thread
                 (SubmitType::Thread, s)
@@ -1351,7 +1357,7 @@ async fn handle_show_diff(
 async fn handle_rerun(
     client: &Client,
     base_url: &str,
-    id: i64,
+    id: &str,
     format: OutputFormat,
 ) -> Result<()> {
     let url = format!("{}/api/patchset/rerun?id={}", base_url, id);
@@ -1378,7 +1384,7 @@ async fn handle_rerun(
 async fn handle_cancel(
     client: &Client,
     base_url: &str,
-    id: i64,
+    id: &str,
     force: bool,
     format: OutputFormat,
 ) -> Result<()> {
@@ -2057,5 +2063,63 @@ mod tests {
             "output": "{\"findings\": [{\"severity\": \"High\", \"preexisting\": true}, {\"severity\": \"Low\", \"preexisting\": false}]}"
         });
         assert!(review_has_new_issues(&r_mixed));
+    }
+
+    #[test]
+    fn test_rerun_accepts_numeric_id() {
+        let cli = Cli::try_parse_from(["sashiko-cli", "rerun", "42"]).unwrap();
+        match cli.command {
+            Commands::Rerun { id } => assert_eq!(id, "42"),
+            _ => panic!("expected Rerun command"),
+        }
+    }
+
+    #[test]
+    fn test_rerun_accepts_slug() {
+        let cli = Cli::try_parse_from(["sashiko-cli", "rerun", "kernel-725"]).unwrap();
+        match cli.command {
+            Commands::Rerun { id } => assert_eq!(id, "kernel-725"),
+            _ => panic!("expected Rerun command"),
+        }
+    }
+
+    #[test]
+    fn test_rerun_accepts_message_id() {
+        let cli = Cli::try_parse_from([
+            "sashiko-cli",
+            "rerun",
+            "20231025202513.12358-1-tony.luck@intel.com",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Rerun { id } => {
+                assert_eq!(id, "20231025202513.12358-1-tony.luck@intel.com");
+            }
+            _ => panic!("expected Rerun command"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_accepts_slug() {
+        let cli = Cli::try_parse_from(["sashiko-cli", "cancel", "kernel-725"]).unwrap();
+        match cli.command {
+            Commands::Cancel { id, force } => {
+                assert_eq!(id, "kernel-725");
+                assert!(!force);
+            }
+            _ => panic!("expected Cancel command"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_accepts_numeric_with_force() {
+        let cli = Cli::try_parse_from(["sashiko-cli", "cancel", "42", "--force"]).unwrap();
+        match cli.command {
+            Commands::Cancel { id, force } => {
+                assert_eq!(id, "42");
+                assert!(force);
+            }
+            _ => panic!("expected Cancel command"),
+        }
     }
 }
