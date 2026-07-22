@@ -1447,32 +1447,45 @@ async fn handle_local(
         cwd
     };
 
+    // Detect message-ID or lore URL input.
+    let is_msgid_input = sashiko::lore::is_message_id(&input) || sashiko::lore::is_lore_url(&input);
+    let resolved_message_id = if is_msgid_input {
+        let mid = if sashiko::lore::is_lore_url(&input) {
+            sashiko::lore::extract_message_id_from_lore_url(&input).ok_or_else(|| {
+                anyhow::anyhow!("Could not extract message-ID from URL: {}", input)
+            })?
+        } else {
+            sashiko::lore::normalize_msgid(&input)
+        };
+        Some(mid)
+    } else {
+        None
+    };
+
     // Check if server is running (unless --force-local)
     if !force_local && let Ok(settings) = Settings::new() {
         let addr = format!("{}:{}", settings.server.host, settings.server.port);
         if tokio::net::TcpStream::connect(&addr).await.is_ok() {
-            // Server is running — submit via API
-            let submit_type = if input.contains("..") {
-                SubmitType::Range
-            } else {
-                SubmitType::Remote
-            };
-            let repo_str = Some(repo_path.to_string_lossy().to_string());
-
+            // Server is running — submit via API.
             let url = format!("{}/api/submit", base_url);
-            let payload = match submit_type {
-                SubmitType::Range => SubmitRequest::RemoteRange {
+            let payload = if let Some(ref msgid) = resolved_message_id {
+                SubmitRequest::Thread {
+                    msgid: msgid.clone(),
+                }
+            } else if input.contains("..") {
+                SubmitRequest::RemoteRange {
                     sha: input.clone(),
-                    repo: repo_str,
+                    repo: Some(repo_path.to_string_lossy().to_string()),
                     skip_subjects: None,
                     only_subjects: None,
-                },
-                _ => SubmitRequest::Remote {
+                }
+            } else {
+                SubmitRequest::Remote {
                     sha: input.clone(),
-                    repo: repo_str,
+                    repo: Some(repo_path.to_string_lossy().to_string()),
                     skip_subjects: None,
                     only_subjects: None,
-                },
+                }
             };
 
             let resp = client.post(&url).json(&payload).send().await?;
@@ -1499,47 +1512,61 @@ async fn handle_local(
     // Cold start path: run review locally via sashiko-review subprocess
     let mut dynamic_prompt = custom_prompt;
     loop {
-        eprint_phase(1, 4, &format!("Extracting patches from {}...", input));
-
-        // Resolve commits
-        let shas = if input.contains("..") {
-            sashiko::git_ops::resolve_git_range(&repo_path, &input).await?
+        // Build ReviewInput: either from a lore message-ID or from local git commits.
+        let (review_input, baseline_ref) = if let Some(ref msgid) = resolved_message_id {
+            eprint_phase(
+                1,
+                4,
+                &format!("Fetching patch from lore.kernel.org: {}...", msgid),
+            );
+            eprintln!();
+            let raw_mbox = sashiko::lore::fetch_mbox_from_lore(msgid).await?;
+            let ri = sashiko::lore::build_review_input_from_mbox(&raw_mbox)?;
+            let bl = baseline.clone().unwrap_or_else(|| "HEAD".to_string());
+            (ri, bl)
         } else {
-            // Single ref — resolve to SHA
-            let sha = sashiko::git_ops::get_commit_hash(&repo_path, &input).await?;
-            vec![sha]
-        };
+            eprint_phase(1, 4, &format!("Extracting patches from {}...", input));
 
-        eprintln!(
-            " ({} commit{})",
-            shas.len(),
-            if shas.len() == 1 { "" } else { "s" }
-        );
+            let shas = if input.contains("..") {
+                sashiko::git_ops::resolve_git_range(&repo_path, &input).await?
+            } else {
+                let sha = sashiko::git_ops::get_commit_hash(&repo_path, &input).await?;
+                vec![sha]
+            };
 
-        // Extract patch metadata and build ReviewInput
-        let mut patches = Vec::new();
-        for (i, sha) in shas.iter().enumerate() {
-            let meta = sashiko::git_ops::extract_patch_metadata(&repo_path, sha)
-                .await
-                .with_context(|| format!("Failed to extract metadata for commit {}", sha))?;
-            patches.push(sashiko::worker::PatchInput {
-                index: (i + 1) as i64,
-                diff: meta.diff,
-                subject: Some(meta.subject),
-                author: Some(meta.author),
-                date: Some(meta.timestamp),
-                message_id: None,
-                commit_id: Some(sha.clone()),
-            });
-        }
+            eprintln!(
+                " ({} commit{})",
+                shas.len(),
+                if shas.len() == 1 { "" } else { "s" }
+            );
 
-        let review_input = sashiko::worker::ReviewInput {
-            id: 0, // Local review, no DB ID
-            subject: patches
-                .first()
-                .and_then(|p| p.subject.clone())
-                .unwrap_or_else(|| input.clone()),
-            patches,
+            let mut patches = Vec::new();
+            for (i, sha) in shas.iter().enumerate() {
+                let meta = sashiko::git_ops::extract_patch_metadata(&repo_path, sha)
+                    .await
+                    .with_context(|| format!("Failed to extract metadata for commit {}", sha))?;
+                patches.push(sashiko::worker::PatchInput {
+                    index: (i + 1) as i64,
+                    diff: meta.diff,
+                    subject: Some(meta.subject),
+                    author: Some(meta.author),
+                    date: Some(meta.timestamp),
+                    message_id: None,
+                    commit_id: Some(sha.clone()),
+                });
+            }
+
+            let ri = sashiko::worker::ReviewInput {
+                id: 0,
+                subject: patches
+                    .first()
+                    .and_then(|p| p.subject.clone())
+                    .unwrap_or_else(|| input.clone()),
+                patches,
+            };
+
+            let bl = baseline.clone().unwrap_or_else(|| format!("{}^", shas[0]));
+            (ri, bl)
         };
 
         let review_json =
@@ -1547,15 +1574,6 @@ async fn handle_local(
 
         // Locate sashiko-review binary
         let review_bin = find_review_binary()?;
-
-        // Build subprocess args
-        let baseline_ref = if let Some(b) = &baseline {
-            b.clone()
-        } else {
-            // Default: parent of first commit
-            let first_sha = &shas[0];
-            format!("{}^", first_sha)
-        };
 
         let mut args = vec![
             "--baseline".to_string(),

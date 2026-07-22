@@ -62,6 +62,14 @@ pub fn is_message_id(input: &str) -> bool {
     }
 }
 
+/// Strips surrounding angle brackets from a message-ID.
+///
+/// Centralizes the `<id>` → `id` normalization so callers do not
+/// each implement their own trimming.
+pub fn normalize_msgid(id: &str) -> String {
+    id.trim_start_matches('<').trim_end_matches('>').to_string()
+}
+
 /// Extracts the message-ID component from a lore.kernel.org URL.
 ///
 /// Handles patterns such as:
@@ -83,9 +91,9 @@ pub fn extract_message_id_from_lore_url(url: &str) -> Option<String> {
         if *seg == "raw" || *seg == "t.mbox.gz" {
             continue;
         }
-        let cleaned = seg.trim_start_matches('<').trim_end_matches('>');
+        let cleaned = normalize_msgid(seg);
         if cleaned.contains('@') {
-            return Some(cleaned.to_string());
+            return Some(cleaned);
         }
     }
     None
@@ -108,9 +116,7 @@ const MAX_MBOX_DECOMPRESSED: u64 = 50 * 1024 * 1024;
 /// The message-ID is percent-encoded to handle IDs that contain
 /// path-significant characters such as `/`.
 pub async fn fetch_mbox_from_lore(message_id: &str) -> Result<String> {
-    let clean_id = message_id
-        .trim_start_matches('<')
-        .trim_end_matches('>');
+    let clean_id = normalize_msgid(message_id);
     let encoded_id =
         percent_encoding::utf8_percent_encode(&clean_id, PATH_SEGMENT_ENCODE).to_string();
     let url = format!("https://lore.kernel.org/all/{}/t.mbox.gz", encoded_id);

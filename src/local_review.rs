@@ -266,6 +266,46 @@ pub async fn run_git_review(
     .await
 }
 
+/// Run a local review from a raw mbox string fetched from lore.kernel.org.
+///
+/// Unlike [`run_git_review`] which uses `current_tree: true` and reads
+/// commits directly from the local history, this function sets
+/// `current_tree: false` so that patches are applied to a worktree via
+/// `git am`.  The [`PatchInput`] entries have `commit_id: None`, which
+/// triggers the `git am` apply path in [`apply_single_patch`].
+pub async fn run_mbox_review(
+    raw_mbox: &str,
+    repo_path: PathBuf,
+    options: ReviewOptions,
+    progress: Option<&ProgressCallback<'_>>,
+) -> Result<Value> {
+    let review_input = crate::lore::build_review_input_from_mbox(raw_mbox)?;
+    let baseline = options
+        .baseline
+        .clone()
+        .or_else(|| Some("HEAD".to_string()));
+
+    run_worker(
+        review_input,
+        WorkerOptions {
+            settings_path: options
+                .settings_path
+                .or_else(|| Some(Settings::local_review_path())),
+            baseline,
+            prompts: options.prompts,
+            no_ai: options.no_ai,
+            ai_provider: options.ai_provider,
+            custom_prompt: options.custom_prompt,
+            stages: options.stages,
+            current_tree: false,
+            ..WorkerOptions::default()
+        },
+        Some(repo_path),
+        progress,
+    )
+    .await
+}
+
 pub async fn run_worker(
     input: ReviewInput,
     options: WorkerOptions,

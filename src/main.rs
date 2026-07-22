@@ -18,7 +18,7 @@ use sashiko::events::{Event, ParsedArticle};
 use sashiko::ingestor::Ingestor;
 use sashiko::local_review::{
     ProgressEvent, ReviewOptions, WorkerOptions, print_worker_json, result_has_error,
-    result_has_high_or_critical_findings, run_git_review, run_worker_from_stdin,
+    result_has_high_or_critical_findings, run_git_review, run_mbox_review, run_worker_from_stdin,
 };
 use sashiko::prompt_bundle;
 use sashiko::reviewer::Reviewer;
@@ -1372,21 +1372,52 @@ async fn handle_review_command(
         }
     };
 
-    let result = run_git_review(
-        repo_path,
-        input.clone(),
-        ReviewOptions {
-            baseline,
-            settings_path,
-            prompts,
-            no_ai,
-            ai_provider,
-            custom_prompt,
-            stages,
-        },
-        Some(&progress),
-    )
-    .await?;
+    let is_msgid_input = sashiko::lore::is_message_id(&input) || sashiko::lore::is_lore_url(&input);
+
+    let result = if is_msgid_input {
+        let message_id = if sashiko::lore::is_lore_url(&input) {
+            sashiko::lore::extract_message_id_from_lore_url(&input).ok_or_else(|| {
+                anyhow::anyhow!("Could not extract message-ID from URL: {}", input)
+            })?
+        } else {
+            sashiko::lore::normalize_msgid(&input)
+        };
+
+        eprintln!("Fetching patch from lore.kernel.org: {}", message_id);
+        let raw_mbox = sashiko::lore::fetch_mbox_from_lore(&message_id).await?;
+
+        run_mbox_review(
+            &raw_mbox,
+            repo_path,
+            ReviewOptions {
+                baseline,
+                settings_path,
+                prompts,
+                no_ai,
+                ai_provider,
+                custom_prompt,
+                stages,
+            },
+            Some(&progress),
+        )
+        .await?
+    } else {
+        run_git_review(
+            repo_path,
+            input.clone(),
+            ReviewOptions {
+                baseline,
+                settings_path,
+                prompts,
+                no_ai,
+                ai_provider,
+                custom_prompt,
+                stages,
+            },
+            Some(&progress),
+        )
+        .await?
+    };
 
     match format {
         OutputFormat::Json => {
